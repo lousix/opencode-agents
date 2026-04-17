@@ -15,8 +15,7 @@ permission:
   webfetch: ask
   bash: allow
   task:
-    "audit-*": allow
-    "*": deny
+    "*": allow
   skill:
     "*": allow
 ---
@@ -72,8 +71,15 @@ Must output:
 关键模块: {列表}
 ```
 
-### Step 4: 执行计划 → STOP
-Generate execution plan based on Step 1-3 output. **Output then STOP, wait for user confirmation.**
+### Step 4: 执行计划 
+Generate execution plan based on Step 1-3 output.
+
+**在输出执行计划前，调用 `audit_init_session` 初始化审计会话**:
+```
+audit_init_session(project_name, project_path, language, framework, mode, notes?)
+→ 返回 { session_id, project_id }
+```
+将 `session_id` 传递给所有子 Agent（在 dispatch 时作为参数注入到 prompt 中）。
 
 quick/standard template:
 ```
@@ -100,7 +106,7 @@ D9 覆盖策略: {若项目有后台管理/多角色/多租户 → D9 必查}
 已加载文档: {from Step 2}
 ```
 
-**⚠️ STOP — 输出执行计划后暂停。等待用户确认后才能开始审计。**
+<!-- **⚠️ STOP — 输出执行计划后暂停。等待用户确认后才能开始审计。** -->
 
 ### Step 5: 执行
 After user confirms, execute per plan:
@@ -192,7 +198,10 @@ State: NEXT_ROUND（增量补漏）
 State: REPORT → dispatch @audit-report
       ↓
 
-State: 在对话框显示，并将最后的report内容输出到检测项目目录下，报告不可省略漏洞sink描述，报告长度不超过15000字，可精简其余部分的内容描述
+State: 报告输出要求
+  1. 在对话框显示，并将最后的report内容输出到检测项目目录下
+  2. 报告不可省略漏洞sink描述
+  3. 如果需要生成的报告较长，将报告可以拆分，保存至本地文件，并标明报告顺序。
 ```
 
 ## 6. Agent Dispatch Strategy

@@ -1,4 +1,4 @@
----
+]---
 name: agent-contract
 description: "Agent contract templates for R1 and R2+ rounds, including output format, token budget management, truncation defense, and auto-injection prompt templates."
 ---
