@@ -51,7 +51,7 @@ Baseline from DataEase v2 audit (2026-02):
 
 **Smoke test only:** Prompt tweaks, reference doc additions that do not change core logic, minor changes where full suite is overkill.
 
-## 5. Quick Smoke Test (快速冒烟测试)
+## 5. Standard Smoke Test (标准冒烟测试)
 
 Target: under 5 minutes. Uses a single Java class (`SmokeTestVulnApp.java`) with 5 planted vulns:
 
@@ -70,7 +70,7 @@ Target: under 5 minutes. Uses a single Java class (`SmokeTestVulnApp.java`) with
 | No crashes | Audit completes without tool errors |
 
 ```bash
-claude -p "Run /audit in quick mode on ./smoke-test-fixture/" \
+claude -p "Run /audit in standard mode on ./smoke-test-fixture/" \
   --allowedTools 'Bash,Read,Glob,Grep,Write' > smoke_result.txt
 # Verify: grep -c "SENTINEL" smoke_result.txt >= 1
 # Verify: grep -c "SQL.Injection\|SQLi" smoke_result.txt >= 1

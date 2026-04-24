@@ -3,8 +3,8 @@ description: "D1 injection audit agent (sink-driven): SQL/HQL/NoSQL, command inj
 mode: subagent
 temperature: 0.1
 tools:
-  write: false
-  edit: false
+  write: true
+  edit: true
   bash: true
   skill: true
 permission:
@@ -15,7 +15,7 @@ permission:
   glob: allow
   list: allow
   lsp: allow
-  edit: deny
+  edit: allow
   webfetch: ask
   bash: allow
   task:

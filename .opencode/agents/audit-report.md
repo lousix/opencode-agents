@@ -3,9 +3,9 @@ description: "Report generation agent: severity calibration, attack chain constr
 mode: subagent
 temperature: 0.2
 tools:
-  write: false
-  edit: false
-  bash: false
+  write: true
+  edit: true
+  bash: true
   skill: true
 permission:
   "*": allow
@@ -15,7 +15,7 @@ permission:
   glob: allow
   list: allow
   lsp: allow
-  edit: deny
+  edit: allow
   webfetch: ask
   bash: allow
   skill:

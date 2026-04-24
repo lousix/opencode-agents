@@ -96,7 +96,7 @@ const auditInitSession = tool({
     project_path: tool.schema.string().describe("Absolute path to the project being audited"),
     language:     tool.schema.string().optional().describe("Primary language, e.g. Python, Java, Go"),
     framework:    tool.schema.string().optional().describe("Framework, e.g. Django, Spring Boot"),
-    mode:         tool.schema.string().optional().describe("Audit mode: quick | standard | deep"),
+    mode:         tool.schema.string().optional().describe("Audit mode: standard | deep"),
     notes:        tool.schema.string().optional().describe("Notes for this session, e.g. 'post-fix retest round 2'"),
   },
   async execute(args) {

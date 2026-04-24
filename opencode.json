@@ -21,25 +21,17 @@
       "temperature": 0.2,
       "prompt": "{file:.opencode/agents/code-audit.md}",
       "tools": {
-        "write": false,
-        "edit": false,
+        "write": true,
+        "edit": true,
         "bash": true,
         "skill": true
       },
       "permission": {
         "task": {
-          "audit-*": "allow",
-          "*": "deny"
+          "*": "allow"
         },
         "bash": {
-          "*": "ask",
-          "git *": "allow",
-          "semgrep *": "allow",
-          "bandit *": "allow",
-          "gosec *": "allow",
-          "gitleaks *": "allow",
-          "npm audit*": "allow",
-          "pip-audit*": "allow"
+          "*": "allow"
         },
         "skill": {
           "*": "allow"
@@ -52,15 +44,14 @@
       "temperature": 0.1,
       "prompt": "{file:.opencode/agents/audit-recon.md}",
       "tools": {
-        "write": false,
-        "edit": false,
+        "write": true,
+        "edit": true,
         "bash": true,
         "skill": true
       },
       "permission": {
         "bash": {
-          "*": "ask",
-          "git *": "allow"
+          "*": "allow"
         },
         "skill": {
           "*": "allow"
@@ -73,15 +64,14 @@
       "temperature": 0.1,
       "prompt": "{file:.opencode/agents/audit-d1-injection.md}",
       "tools": {
-        "write": false,
-        "edit": false,
+        "write": true,
+        "edit": true,
         "bash": true,
         "skill": true
       },
       "permission": {
         "task": {
-          "audit-*": "allow",
-          "*": "deny"
+          "*": "allow"
         },
         "skill": { "*": "allow" }
       }
@@ -92,15 +82,14 @@
       "temperature": 0.1,
       "prompt": "{file:.opencode/agents/audit-d2d3d9-control.md}",
       "tools": {
-        "write": false,
-        "edit": false,
+        "write": true,
+        "edit": true,
         "bash": true,
         "skill": true
       },
       "permission": {
         "task": {
-          "audit-*": "allow",
-          "*": "deny"
+          "*": "allow"
         },
         "skill": { "*": "allow" }
       }
@@ -111,15 +100,14 @@
       "temperature": 0.1,
       "prompt": "{file:.opencode/agents/audit-d4-rce.md}",
       "tools": {
-        "write": false,
-        "edit": false,
+        "write": true,
+        "edit": true,
         "bash": true,
         "skill": true
       },
       "permission": {
         "task": {
-          "audit-*": "allow",
-          "*": "deny"
+          "*": "allow"
         },
         "skill": { "*": "allow" }
       }
@@ -130,15 +118,14 @@
       "temperature": 0.1,
       "prompt": "{file:.opencode/agents/audit-d5d6-file-ssrf.md}",
       "tools": {
-        "write": false,
-        "edit": false,
+        "write": true,
+        "edit": true,
         "bash": true,
         "skill": true
       },
       "permission": {
         "task": {
-          "audit-*": "allow",
-          "*": "deny"
+          "*": "allow"
         },
         "skill": { "*": "allow" }
       }
@@ -149,15 +136,14 @@
       "temperature": 0.1,
       "prompt": "{file:.opencode/agents/audit-d7d8d10-config.md}",
       "tools": {
-        "write": false,
-        "edit": false,
+        "write": true,
+        "edit": true,
         "bash": true,
         "skill": true
       },
       "permission": {
         "task": {
-          "audit-*": "allow",
-          "*": "deny"
+          "*": "allow"
         },
         "skill": { "*": "allow" }
       }
@@ -168,9 +154,9 @@
       "temperature": 0.1,
       "prompt": "{file:.opencode/agents/audit-evaluation.md}",
       "tools": {
-        "write": false,
-        "edit": false,
-        "bash": false,
+        "write": true,
+        "edit": true,
+        "bash": true,
         "skill": true
       },
       "permission": {
@@ -183,38 +169,20 @@
       "temperature": 0.2,
       "prompt": "{file:.opencode/agents/audit-report.md}",
       "tools": {
-        "write": false,
-        "edit": false,
-        "bash": false,
-        "skill": true
-      },
-      "permission": {
-        "skill": { "*": "allow" }
-      }
-    },
-    "audit-quick-diff": {
-      "description": "Quick-Diff incremental audit agent: git diff analysis, change classification, incremental attack surface assessment for PR review and CI/CD pipelines.",
-      "mode": "subagent",
-      "temperature": 0.1,
-      "prompt": "{file:.opencode/agents/audit-quick-diff.md}",
-      "tools": {
-        "write": false,
-        "edit": false,
+        "write": true,
+        "edit": true,
         "bash": true,
         "skill": true
       },
       "permission": {
-        "bash": {
-          "*": "ask",
-          "git *": "allow"
-        },
         "skill": { "*": "allow" }
       }
     }
   },
   "permission": {
-    "edit": "deny",
-    "bash": "ask",
+    "write": "allow",
+    "edit": "allow",
+    "bash": "allow",
     "skill": {
       "*": "allow"
     }

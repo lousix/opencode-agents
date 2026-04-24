@@ -3,9 +3,9 @@ description: "Round evaluation agent: coverage gap assessment, three-question ru
 mode: subagent
 temperature: 0.1
 tools:
-  write: false
-  edit: false
-  bash: false
+  write: true
+  edit: true
+  bash: true
   skill: true
 permission:
   "*": allow
@@ -15,7 +15,7 @@ permission:
   glob: allow
   list: allow
   lsp: allow
-  edit: deny
+  edit: allow
   webfetch: ask
   bash: allow
   skill:
@@ -117,10 +117,6 @@ Q3: 高风险发现间是否可能存在跨模块关联？ → YES = NEXT_ROUND
 
 ## 自适应轮次决策（按审计模式分级）
 
-### quick 模式（仅 1 轮）
-覆盖 ≥ 8/10 → REPORT
-覆盖 < 8/10 → 标注未覆盖维度后 REPORT（不追加轮次）
-
 ### standard 模式（1-2 轮）
 - R1 覆盖 ≥ 9/10 且三问全 NO 且无 UNCHECKED → 启动 1 Agent 深度补漏 → R2 后 REPORT
 - R1 覆盖 ≥ 7/10 → 按缺口数分配 R2 Agent → R2 后 REPORT
@@ -144,7 +140,6 @@ D1(注入)+D2(认证)+D3(授权) 任一未覆盖 → 不可进入 REPORT
 
 ## 轮次硬上限
 
-- quick: max 1 轮
 - standard: max 2 轮
 - deep: max 3 轮
 - 达到上限 → 强制进入 REPORT（标注未完成维度）

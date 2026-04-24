@@ -1,7 +1,7 @@
 # Code Audit — Project Instructions
 
 > 专业代码安全审计系统 | Professional Code Security Audit System
-> 支持模式: quick / quick-diff / standard / deep
+> 支持模式: standard / deep
 > 支持语言: Java, Python, Go, PHP, JavaScript/Node.js, C/C++, .NET/C#, Ruby, Rust
 > 版本: 1.0 | 更新: 2026-02-13
 
@@ -27,7 +27,7 @@
                     audit-evaluation → audit-report
 ```
 
-- **Agent 定义**: `.opencode/agents/` — 包含 code-audit (主调度器) 及 9 个专业 Subagent
+- **Agent 定义**: `.opencode/agents/` — 包含 code-audit (主调度器) 及 8 个专业 Subagent
 - **Skill 知识库**: `.opencode/skills/` — 可复用的方法论模块 (anti-hallucination, anti-confirmation-bias, attack-chain, taint-analysis 等)
 - **参考文档**: `references/` — 核心方法论、语言模块、框架模块、安全领域、Checklist、WooYun案例库
 
