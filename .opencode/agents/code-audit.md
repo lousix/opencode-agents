@@ -103,8 +103,8 @@ deep template (all fields required):
 Agent 方案: {每个 Agent 负责的维度和 max_turns}
 Agent 数量: {小型(<10K) 2-3, 中型(10K-100K) 3-5, 大型(>100K) 5-9}
 D9 覆盖策略: {若项目有后台管理/多角色/多租户 → D9 必查}
-轮次规划: R1 广度扫描 → R1 评估 → R2 增量补漏(按需)
-门控条件: PHASE_1_RECON → ROUND_N_RUNNING → ROUND_N_EVALUATION → REPORT
+轮次规划: R1 广度扫描 → R1 评估 → R2 增量补漏(按需) → 报告前复核
+门控条件: PHASE_1_RECON → ROUND_N_RUNNING → ROUND_N_EVALUATION → VERIFY_FINDINGS → REPORT
 预估总 turns: {Agent数 × max_turns}
 已加载文档: {from Step 2}
 ```
@@ -128,6 +128,7 @@ Validate before generating report:
 | D1-D10 覆盖率标记 | ✅ | ✅ |
 | 所有 Agent 完成或超时标注 | — | ✅ |
 | 轮次评估三问通过 | — | ✅ |
+| 每个 finding 真实性复核完成 | ✅ | ✅ |
 
 Not met → MUST NOT generate final report.
 
@@ -195,7 +196,17 @@ State: NEXT_ROUND（增量补漏）
   └──────────────────────────────────────────────────────────────┘
       ↓ 回到 ROUND_N_RUNNING
 
-State: REPORT → dispatch @audit-report
+State: VERIFY_FINDINGS（报告前真实性复核）
+  ┌──────────────────────────────────────────────────────────────┐
+  │ Entry: dispatch @audit-report 执行 pre-report verification    │
+  │ 对每个 finding 按漏洞类型分派原维度 Agent 进行 verification-only│
+  │ 复核重点: 真实 Source、Source→Sink 可达性、净化是否有效、利用方法│
+  │ 门控: Critical/High 必须有 TRUE_SOURCE；仅 Sink 命中必须降级      │
+  │ 输出: VERIFIED / PARTIAL / SINK_ONLY / FALSE_POSITIVE + 降级动作 │
+  └──────────────────────────────────────────────────────────────┘
+      ↓ 门控通过
+
+State: REPORT → @audit-report 生成最终报告
       ↓
 
 State: 报告输出要求

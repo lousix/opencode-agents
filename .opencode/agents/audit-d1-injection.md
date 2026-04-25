@@ -164,6 +164,18 @@ f. 同 pattern 多文件 → 报告 1 个发现 + 受影响文件列表
 
 ---
 
+## ★ Verification-Only Mode（报告前真实性复核）
+
+当 prompt 包含 `[VERIFY_FINDING]` 或 `verification-only` 时:
+- 必须加载 `finding-verification`、`anti-hallucination`、`sink-chain-methodology`
+- 只复核给定 finding，不寻找新漏洞，不扩展新攻击面
+- 必须 Read 原始文件、Source 节点、Sink 节点和每个关键 Transform
+- 找不到真实外部 Source 时，输出 `SINK_ONLY` 或 `FALSE_POSITIVE`
+- Critical/High 若没有 `TRUE_SOURCE`，必须建议降级
+- 输出必须使用 finding-verification 的 `[VERIFY]` 格式
+
+---
+
 ## ★ 数据库写入规则（强制执行）
 
 **每发现一个漏洞，立即调用 `audit_save_finding` 写入数据库，不等报告阶段。**

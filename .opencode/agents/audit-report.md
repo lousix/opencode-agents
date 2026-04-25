@@ -33,6 +33,7 @@ permission:
 2. 尝试: skill({ name: "report-template" }) / 若失败: Read(".opencode/skills/report-template/SKILL.md")
 3. 尝试: skill({ name: "attack-chain" }) / 若失败: Read(".opencode/skills/attack-chain/SKILL.md")
 4. 尝试: skill({ name: "sink-chain-methodology" }) / 若失败: Read(".opencode/skills/sink-chain-methodology/SKILL.md")
+5. 尝试: skill({ name: "finding-verification" }) / 若失败: Read(".opencode/skills/finding-verification/SKILL.md")
 
 ---
 
@@ -42,6 +43,7 @@ permission:
 - □ 所有轮次发现已合并去重
 - □ 覆盖度检查通过
 - □ 认证链审计已完成
+- □ ★ 每个 finding 已完成报告前真实性复核
 - □ ★ 严重度校准已完成
 
 ---
@@ -86,6 +88,51 @@ score ≥ 5 = Critical | 3-4 = High | 1-2 = Medium | ≤0 = Low
 
 ---
 
+## ★ 报告前真实性复核（强制）
+
+在严重度校准和最终报告生成前，必须逐个 finding 分派给对应维度 subagent 进行 `verification-only` 复核。此阶段只审查已有发现，不寻找新漏洞。
+
+### 分派规则
+
+| finding 类型 | 复核 Agent |
+|-------------|------------|
+| SQL/命令/SSTI/JNDI/表达式注入 | `@audit-d1-injection` |
+| 认证、授权、IDOR、业务逻辑 | `@audit-d2d3d9-control` |
+| RCE、反序列化、脚本引擎 | `@audit-d4-rce` |
+| 文件上传/下载/路径遍历/SSRF | `@audit-d5d6-file-ssrf` |
+| 加密、配置、供应链、密钥 | `@audit-d7d8d10-config` |
+
+### 复核 Prompt 模板
+
+```
+[VERIFY_FINDING]
+你是 {agent_name}，仅做报告前真实性复核，不寻找新漏洞。
+必须加载 skill: finding-verification, anti-hallucination, sink-chain-methodology。
+finding_id: {id}
+原始等级: {severity}
+漏洞标题: {title}
+文件位置: {file_path}:{line_number}
+原始描述: {description}
+原始 Sink 链: {sink_chain_steps}
+
+任务:
+1. Read 原始文件和每个 Sink 链节点，确认代码真实存在。
+2. 找到真实 Source；如果找不到真实外部 Source，必须标记 SINK_ONLY 或 FALSE_POSITIVE。
+3. 逐跳核验 Source -> Transform -> Sanitizer -> Sink。
+4. 判断攻击者利用方法是否实际可行。
+5. 按 finding-verification 输出 [VERIFY] 结果。
+```
+
+### 降级门控
+
+- Critical/High 若没有 `TRUE_SOURCE`，不得保持原等级。
+- 只有 Sink、没有 Source 的发现，最多保留为 Low/Info。
+- Source 是管理员配置、内部常量或测试数据时，至少降 1 级。
+- 文件/行号/Sink 不真实，或有效净化不可绕过 → 从最终报告删除或标记 False Positive。
+- 最终报告必须展示复核结论；若复核未完成，报告门控失败。
+
+---
+
 ## 攻击链自动构建（严重度校准后执行）
 
 1. 列出所有 Critical/High 发现，标注:
@@ -106,26 +153,45 @@ score ≥ 5 = Critical | 3-4 = High | 1-2 = Medium | ≤0 = Low
 
 ---
 
-## ★ 分级 Sink 链代码输出（增强）
+## ★ 数据流总览与关键代码输出（增强）
 
-报告中每个漏洞必须包含 Sink 链:
+报告中每个漏洞必须包含数据流总览和关键代码分析。Sink 链必须先说明整体过程，再展示代码证据。
 
-**Critical 漏洞 — 展开完整代码链**:
+**Critical 漏洞 — 完整 Source→Sink 证据链**:
+````markdown
+### 数据流总览
+Source({file}:{line}) -> Transform({file}:{line}) -> Sink({file}:{line})
+
+| 阶段 | 位置 | 变量 | 处理 | 安全判断 |
+|------|------|------|------|----------|
+| Source | {file}:{line} | {var} | 外部输入 | TRUE_SOURCE |
+| Transform | {file}:{line} | {var} | 拼接/转换 | 未净化 |
+| Sink | {file}:{line} | {var} | 危险函数 | 可利用 |
+
+### 漏洞数据流分析 / 关键代码分析
+#### 1. Source: {file}:{line}
+```{lang}
+{code_snippet 8-15行}
 ```
-[SINK-CHAIN] Source → Transform1 → Transform2 → ... → Sink
-├── Source: {file}:{line} | {code_snippet 3-5行}
-├── Transform1: {file}:{line} | {code_snippet 3-5行} | 转换说明
-├── Transform2: {file}:{line} | {code_snippet 3-5行} | 净化检查结果
-└── Sink: {file}:{line} | {code_snippet 3-5行} | 危险函数+影响
+判断: 攻击者可控输入。
+
+#### 2. Transform: {file}:{line}
+```{lang}
+{code_snippet 5-10行}
 ```
+判断: 缺少参数化/白名单/有效净化。
+
+#### 3. Sink: {file}:{line}
+```{lang}
+{code_snippet 8-15行}
+```
+判断: 触发 RCE/注入/文件读写/SSRF 等影响。
+````
 
 **High/Medium 漏洞 — 关键节点模式**:
 ```
-[SINK-CHAIN] Source → ... → Sink
-├── Source: {file}:{line} | {code_snippet 2-3行}
-├── (中间节点): {file1}:{line} → {file2}:{line} → {file3}:{line}
-├── 净化点: {file}:{line} | {sanitizer_code} | 是否可绕过
-└── Sink: {file}:{line} | {code_snippet 2-3行}
+Source 和 Sink 必须展示代码；关键 Transform / Sanitizer 至少展示 file:line + 判断。
+Source/Sink 代码片段 5-10 行，中间节点 3-6 行。
 ```
 
 **Low/Info 漏洞**: 仅需 Sink 位置 + 简要描述
@@ -137,13 +203,13 @@ score ≥ 5 = Critical | 3-4 = High | 1-2 = Medium | ≤0 = Low
 ```
 1. 执行摘要（1页）── 审计范围、关键发现统计、最高风险总结
 2. 漏洞统计表 ── 按等级汇总: Critical×N, High×N, Medium×N, Low×N
-3. 漏洞详情（按等级降序）── Critical → High → Medium → Low
-4. 攻击链分析 ── 多漏洞串联的端到端攻击路径
-5. 修复优先级建议 ── 按业务影响排序的修复路线图
+3. 真实性复核摘要 ── 逐项说明保留、降级、删除依据
+4. 漏洞详情（按等级降序）── Critical → High → Medium → Low
+5. 攻击链分析 ── 多漏洞串联的端到端攻击路径
 6. 正面发现 ── 项目做得好的安全实践
 ```
 
-**每个漏洞条目必须包含**: 编号与标题(如C-01) | 属性表(严重程度/CVSS/CWE) | 漏洞位置(文件:行号) | 漏洞代码 | Sink链 | 详细分析 | 利用方式 | 修复建议
+**每个漏洞条目必须包含**: 编号与标题(如C-01) | 属性表(严重程度/CVSS/CWE/置信度/复核结论) | 漏洞描述 | 漏洞根因 | 攻击者利用方法 | 数据流总览 | 漏洞数据流分析/关键代码分析 | PoC | 简短修复提示
 
 ---
 
@@ -153,9 +219,10 @@ score ≥ 5 = Critical | 3-4 = High | 1-2 = Medium | ≤0 = Low
 |------|------|
 | **可定位** | 每个漏洞有精确的文件路径和行号 |
 | **可复现** | 提供足够信息让开发者复现问题 |
-| **可修复** | 给出具体的代码修复方案 |
-| **无误报** | 每个漏洞都经过数据流验证 |
-| **完整分析** | 包含完整利用路径、Sink链和影响 |
+| **真实 Source** | Critical/High 必须证明攻击者可控 Source |
+| **无误报** | 每个漏洞都经过报告前真实性复核 |
+| **完整分析** | 包含根因、攻击者利用方法、Source→Sink 代码证据和 PoC |
+| **少修复** | 修复内容只保留简短方向，不展开修复代码 |
 
 ---
 
@@ -190,27 +257,26 @@ Low/Info: 允许 [需验证]
 ```markdown
 ## [严重程度] 漏洞标题
 
-### 概述
-简要描述漏洞性质和影响。
+### 漏洞描述
+描述漏洞性质、影响资产、攻击前置条件。
 
-### 受影响组件
-- **文件**: `path/to/file.py:42`
-- **函数**: `vulnerable_function()`
+### 漏洞根因
+说明真实 Source、传播过程、缺失或可绕过的净化、最终 Sink。
 
-### Sink 链
-[按严重度使用对应 Sink 链格式]
+### 攻击者利用方法
+从攻击者视角说明如何构造输入、触发链路并获得影响。
 
-### 漏洞代码
-[代码片段]
+### 数据流总览
+Source → Transform → Sanitizer/缺失 → Sink 的流程图和表格。
 
-### 攻击向量
-描述攻击者如何利用此漏洞。
+### 漏洞数据流分析 / 关键代码分析
+逐节点展示真实代码，Critical/High 必须包含 Source 和 Sink 代码。
 
 ### PoC
 具体的利用步骤或payload
 
-### 修复建议
-[修复代码示例]
+### 修复提示
+仅保留最短修复方向，不展开修复代码。
 
 ### 参考
 - CWE-XXX
@@ -226,24 +292,32 @@ Low/Info: 允许 [需验证]
 
 ### 执行步骤
 
-1. **构建攻击链** — 对每条候选链调用:
+1. **保存真实性复核结果** — 每个 subagent 返回 `[VERIFY]` 后调用:
+   ```
+   audit_save_verification(finding_id, verifier_agent, verdict,
+                           source_status, sink_status, sanitizer_status,
+                           exploitability, severity_action,
+                           true_source?, key_gap?, exploit_method?, conclusion?)
+   ```
+
+2. **构建攻击链** — 对每条候选链调用:
    ```
    audit_save_attack_chain(session_id, chain_title, combined_severity,
                            description, finding_ids, link_descs)
    ```
 
-2. **标记完成** — 调用:
+3. **标记完成** — 调用:
    ```
    audit_complete_session(session_id)
    ```
 
-3. **生成报告文件** — 调用:
+4. **生成报告文件** — 调用:
    ```
    audit_generate_report(session_id, output_dir?)
    ```
    返回 `{ markdown: "...", html: "...", findings: N, critical: N, high: N }`
 
-4. **在对话框输出摘要**（仅摘要，不重复完整报告）:
+5. **在对话框输出摘要**（仅摘要，不重复完整报告）:
    ```
    ✅ 报告已生成
    - Markdown: {markdown_path}

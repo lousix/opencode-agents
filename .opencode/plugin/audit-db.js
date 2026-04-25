@@ -71,6 +71,23 @@ function initSchema(db) {
     notes        TEXT
   )`);
 
+  db.run(`CREATE TABLE IF NOT EXISTS finding_verifications (
+    id                INTEGER PRIMARY KEY,
+    finding_id        INTEGER REFERENCES findings(id),
+    verifier_agent    TEXT,
+    verdict           TEXT,
+    source_status     TEXT,
+    sink_status       TEXT,
+    sanitizer_status  TEXT,
+    exploitability    TEXT,
+    severity_action   TEXT,
+    true_source       TEXT,
+    key_gap           TEXT,
+    exploit_method    TEXT,
+    conclusion        TEXT,
+    created_at        DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
   db.run(`CREATE TABLE IF NOT EXISTS attack_chains (
     id                INTEGER PRIMARY KEY,
     session_id        INTEGER REFERENCES audit_sessions(id),
@@ -194,6 +211,41 @@ const auditSaveSinkChain = tool({
   },
 });
 
+const auditSaveVerification = tool({
+  description: "Save pre-report verification result for a finding. Call after a verification-only subagent reviews the finding.",
+  args: {
+    finding_id:       tool.schema.number().describe("Finding ID being verified"),
+    verifier_agent:   tool.schema.string().optional().describe("Agent that performed verification"),
+    verdict:          tool.schema.string().describe("VERIFIED | PARTIAL | SINK_ONLY | FALSE_POSITIVE"),
+    source_status:    tool.schema.string().describe("TRUE_SOURCE | CONDITIONAL_SOURCE | PSEUDO_SOURCE | NO_SOURCE"),
+    sink_status:      tool.schema.string().describe("CONFIRMED | UNCLEAR | NOT_FOUND"),
+    sanitizer_status: tool.schema.string().describe("NONE | BYPASSABLE | EFFECTIVE | UNKNOWN"),
+    exploitability:   tool.schema.string().describe("PRACTICAL | CONDITIONAL | THEORETICAL | NOT_EXPLOITABLE"),
+    severity_action:  tool.schema.string().describe("KEEP | DOWNGRADE_1 | DOWNGRADE_2 | DROP"),
+    true_source:      tool.schema.string().optional().describe("Verified source location and why it is attacker-controlled"),
+    key_gap:          tool.schema.string().optional().describe("Missing or weak evidence in the chain"),
+    exploit_method:   tool.schema.string().optional().describe("Practical attacker exploitation method"),
+    conclusion:       tool.schema.string().optional().describe("Final verification conclusion"),
+  },
+  async execute(args) {
+    const db = getDb();
+    const result = db.run(
+      `INSERT INTO finding_verifications
+         (finding_id, verifier_agent, verdict, source_status, sink_status, sanitizer_status,
+          exploitability, severity_action, true_source, key_gap, exploit_method, conclusion)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        args.finding_id, args.verifier_agent ?? null, args.verdict, args.source_status,
+        args.sink_status, args.sanitizer_status, args.exploitability, args.severity_action,
+        args.true_source ?? null, args.key_gap ?? null, args.exploit_method ?? null,
+        args.conclusion ?? null,
+      ]
+    );
+    db.close();
+    return JSON.stringify({ verification_id: result.lastInsertRowid });
+  },
+});
+
 const auditSaveAttackChain = tool({
   description: "Save a multi-finding attack chain (e.g. auth bypass → RCE). finding_ids and link_descs are comma-separated, ordered by chain step.",
   args: {
@@ -278,6 +330,16 @@ const auditListSessions = tool({
 
 const SEVERITY_ORDER = ["Critical", "High", "Medium", "Low", "Info"];
 
+function effectiveSeverity(f, verification) {
+  const current = SEVERITY_ORDER.includes(f.severity) ? f.severity : "Info";
+  const idx = SEVERITY_ORDER.indexOf(current);
+  const action = verification?.severity_action;
+  if (action === "DROP") return "Info";
+  if (action === "DOWNGRADE_2") return SEVERITY_ORDER[Math.min(idx + 2, SEVERITY_ORDER.length - 1)];
+  if (action === "DOWNGRADE_1") return SEVERITY_ORDER[Math.min(idx + 1, SEVERITY_ORDER.length - 1)];
+  return current;
+}
+
 function severityBadge(s) {
   const colors = { Critical: "#d32f2f", High: "#f57c00", Medium: "#fbc02d", Low: "#388e3c", Info: "#1976d2" };
   return `<span style="background:${colors[s]??'#888'};color:#fff;padding:2px 8px;border-radius:3px;font-size:0.85em;font-weight:bold">${s}</span>`;
@@ -288,39 +350,240 @@ function escapeHtml(s) {
   return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
 
+function escapeMdCell(s) {
+  return String(s ?? "-").replace(/\|/g, "\\|").replace(/\n/g, "<br>").trim() || "-";
+}
+
+function compactText(s, max = 220) {
+  const text = String(s ?? "").replace(/\s+/g, " ").trim();
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function langForPath(filePath) {
+  const ext = (filePath ?? "").split(".").pop()?.toLowerCase();
+  const map = {
+    java: "java", py: "python", go: "go", php: "php", js: "javascript", ts: "typescript",
+    jsx: "jsx", tsx: "tsx", rb: "ruby", rs: "rust", cs: "csharp", cpp: "cpp", cc: "cpp",
+    c: "c", h: "c", hpp: "cpp", xml: "xml", yml: "yaml", yaml: "yaml", json: "json",
+    properties: "properties", toml: "toml", sql: "sql", sh: "bash"
+  };
+  return map[ext] ?? "";
+}
+
+function normalizeStepType(type) {
+  const t = String(type ?? "").trim();
+  if (!t) return "Step";
+  if (/source/i.test(t)) return "Source";
+  if (/sink/i.test(t)) return "Sink";
+  if (/saniti[sz]er|filter|validate|escape/i.test(t)) return "Sanitizer";
+  if (/transform|propagat|build|convert|process/i.test(t)) return "Transform";
+  return t;
+}
+
+function stepLocation(s) {
+  return s.file_path ? `${s.file_path}${s.line_number ? `:${s.line_number}` : ""}` : "-";
+}
+
+function stepSummary(s) {
+  const type = normalizeStepType(s.step_type);
+  const code = s.code_snippet ? compactText(s.code_snippet, 140) : "";
+  const note = s.notes ? compactText(s.notes, 160) : "";
+  if (note && code) return `${note} | ${code}`;
+  return note || code || "-";
+}
+
+function sourceStatusForSteps(steps) {
+  const source = steps.find(s => normalizeStepType(s.step_type) === "Source");
+  if (!source) return "NO_SOURCE";
+  const text = `${source.notes ?? ""} ${source.code_snippet ?? ""}`.toLowerCase();
+  if (/pseudo|constant|test|mock|fixture|internal only|no_source|not user/i.test(text)) return "PSEUDO_SOURCE";
+  if (/admin|config|profile|operator|deployment|conditional/i.test(text)) return "CONDITIONAL_SOURCE";
+  return "TRUE_SOURCE";
+}
+
+function buildFlowLine(steps) {
+  if (!steps.length) return "";
+  return steps.map(s => {
+    const type = normalizeStepType(s.step_type);
+    const loc = stepLocation(s);
+    return loc === "-" ? type : `${type}(${loc})`;
+  }).join("\n  -> ");
+}
+
+function buildRootCause(f, steps) {
+  const source = steps.find(s => normalizeStepType(s.step_type) === "Source");
+  const sink = steps.findLast?.(s => normalizeStepType(s.step_type) === "Sink")
+    ?? [...steps].reverse().find(s => normalizeStepType(s.step_type) === "Sink");
+  const sanitizers = steps.filter(s => normalizeStepType(s.step_type) === "Sanitizer");
+  if (!steps.length) {
+    return `当前记录尚未包含 Source→Sink 数据流证据。该发现需要在报告前复核阶段补充真实 Source 和 Sink 可达性，否则应降级或移出最终报告。`;
+  }
+  if (!source) {
+    return `当前链路只记录到危险点${sink ? ` ${stepLocation(sink)}` : ""}，但未保存真实外部 Source。该发现不能支撑高危结论，报告前复核应重点确认攻击者是否能够控制进入 Sink 的数据。`;
+  }
+  const sourceLoc = stepLocation(source);
+  const sinkLoc = sink ? stepLocation(sink) : "未记录 Sink";
+  const sanitizerText = sanitizers.length
+    ? `链路中记录了 ${sanitizers.length} 个净化/校验节点，需要确认是否可绕过。`
+    : "链路中未记录有效净化、参数化、白名单或权限拦截。";
+  return `攻击者可控输入从 ${sourceLoc} 进入系统，经业务转换后到达 ${sinkLoc}。${sanitizerText} 根因是外部输入在到达危险操作前缺少有效安全边界控制，导致 ${f.vuln_type ?? "该类漏洞"} 可被触发。`;
+}
+
+function buildExploitMethod(f, steps) {
+  if (f.attack_vector) return f.attack_vector;
+  const source = steps.find(s => normalizeStepType(s.step_type) === "Source");
+  const sink = steps.findLast?.(s => normalizeStepType(s.step_type) === "Sink")
+    ?? [...steps].reverse().find(s => normalizeStepType(s.step_type) === "Sink");
+  if (!source || !sink) {
+    return "当前记录未提供完整攻击路径。报告前复核必须补充攻击者可控入口、关键参数、触发 Sink 的请求或操作步骤。";
+  }
+  return `攻击者控制 ${stepLocation(source)} 处的输入，使其沿业务调用链传播到 ${stepLocation(sink)} 的危险操作。若中间不存在有效净化或权限限制，即可触发 ${f.vuln_type ?? "漏洞"} 影响。`;
+}
+
+function buildFixBrief(f) {
+  if (!f.fix_suggestion) return "";
+  return compactText(f.fix_suggestion, 360);
+}
+
+function findingVerificationStatus(f, steps, verification) {
+  if (verification?.verdict) return verification.verdict;
+  if (!steps.length) return "NO_CHAIN";
+  const sourceStatus = sourceStatusForSteps(steps);
+  const hasSink = steps.some(s => normalizeStepType(s.step_type) === "Sink");
+  if (sourceStatus === "TRUE_SOURCE" && hasSink) return "VERIFIED";
+  if (sourceStatus === "NO_SOURCE" && hasSink) return "SINK_ONLY";
+  if (!hasSink) return "PARTIAL";
+  return sourceStatus;
+}
+
+function verificationSourceStatus(steps, verification) {
+  return verification?.source_status || (steps.length ? sourceStatusForSteps(steps) : "NO_CHAIN");
+}
+
+function verificationAction(verification, fallbackVerification, sourceStatus) {
+  if (verification?.severity_action) return verification.severity_action;
+  return fallbackVerification === "VERIFIED" ? "KEEP"
+    : fallbackVerification === "SINK_ONLY" || sourceStatus === "NO_SOURCE" ? "DOWNGRADE/DROP"
+    : "REVIEW";
+}
+
+function buildVerificationSummaryMd(findings, sinkMap, verificationMap = {}) {
+  if (!findings.length) return "";
+  const rows = findings.map(f => {
+    const steps = sinkMap[f.id] ?? [];
+    const verification = verificationMap[f.id];
+    const status = findingVerificationStatus(f, steps, verification);
+    const sourceStatus = verificationSourceStatus(steps, verification);
+    const action = verificationAction(verification, status, sourceStatus);
+    const sev = effectiveSeverity(f, verification);
+    const sevText = sev === f.severity ? sev : `${f.severity} -> ${sev}`;
+    return `| ${f._vid ?? f.id} | ${escapeMdCell(f.title)} | ${escapeMdCell(sevText)} | ${escapeMdCell(status)} | ${escapeMdCell(sourceStatus)} | ${escapeMdCell(action)} |`;
+  }).join("\n");
+  return `## 真实性复核摘要\n\n| ID | 漏洞 | 等级 | 复核状态 | Source 状态 | 建议动作 |\n|----|------|------|----------|-------------|----------|\n${rows}\n\n`;
+}
+
+function buildVerificationSummaryHtml(findings, sinkMap, verificationMap = {}) {
+  if (!findings.length) return "";
+  const rows = findings.map(f => {
+    const steps = sinkMap[f.id] ?? [];
+    const verification = verificationMap[f.id];
+    const status = findingVerificationStatus(f, steps, verification);
+    const sourceStatus = verificationSourceStatus(steps, verification);
+    const action = verificationAction(verification, status, sourceStatus);
+    const sev = effectiveSeverity(f, verification);
+    const sevText = sev === f.severity ? severityBadge(sev) : `${severityBadge(f.severity)} → ${severityBadge(sev)}`;
+    return `<tr>
+      <td><a href="#${escapeHtml(f._vid ?? String(f.id))}">${escapeHtml(f._vid ?? String(f.id))}</a></td>
+      <td>${escapeHtml(f.title)}</td>
+      <td>${sevText}</td>
+      <td>${escapeHtml(status)}</td>
+      <td>${escapeHtml(sourceStatus)}</td>
+      <td>${escapeHtml(action)}</td>
+    </tr>`;
+  }).join("\n");
+  return `<h2>真实性复核摘要</h2>
+  <table style="border-collapse:collapse;width:100%;font-size:0.9em;margin:16px 0;background:#fff">
+    <thead><tr style="background:#f1f3f5">
+      <th style="text-align:left;padding:8px;border:1px solid #ddd">ID</th>
+      <th style="text-align:left;padding:8px;border:1px solid #ddd">漏洞</th>
+      <th style="text-align:left;padding:8px;border:1px solid #ddd">等级</th>
+      <th style="text-align:left;padding:8px;border:1px solid #ddd">复核状态</th>
+      <th style="text-align:left;padding:8px;border:1px solid #ddd">Source 状态</th>
+      <th style="text-align:left;padding:8px;border:1px solid #ddd">建议动作</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
 function buildSinkChainMd(steps) {
   if (!steps.length) return "";
-  const lines = steps.map((s, i) => {
-    const prefix = i === steps.length - 1 ? "└──" : "├──";
-    const loc = s.file_path ? `${s.file_path}${s.line_number ? `:${s.line_number}` : ""}` : "";
-    const code = s.code_snippet ? ` | \`${s.code_snippet.replace(/\n/g," ").slice(0,120)}\`` : "";
-    const note = s.notes ? ` | ${s.notes}` : "";
-    return `${prefix} ${s.step_type}: ${loc}${code}${note}`;
-  });
-  const chain = steps.map(s => s.step_type).join(" → ");
-  return `\`\`\`\n[SINK-CHAIN] ${chain}\n${lines.join("\n")}\n\`\`\``;
+  const sourceStatus = sourceStatusForSteps(steps);
+  const warning = sourceStatus === "TRUE_SOURCE"
+    ? ""
+    : `> 真实性提示: 当前链路 Source 状态为 **${sourceStatus}**，报告前复核应考虑降级。\n\n`;
+  const flow = `\`\`\`text\n${buildFlowLine(steps)}\n\`\`\``;
+  const rows = steps.map((s, i) =>
+    `| ${i + 1} | ${escapeMdCell(normalizeStepType(s.step_type))} | \`${escapeMdCell(stepLocation(s))}\` | ${escapeMdCell(stepSummary(s))} |`
+  ).join("\n");
+  const table = `| # | 阶段 | 位置 | 安全判断 / 证据摘要 |\n|---|------|------|--------------------|\n${rows}`;
+  const codeBlocks = steps.map((s, i) => {
+    const type = normalizeStepType(s.step_type);
+    const loc = stepLocation(s);
+    const lang = langForPath(s.file_path);
+    const snippet = String(s.code_snippet ?? "").trim();
+    const code = snippet
+      ? `\`\`\`${lang}\n${snippet}\n\`\`\``
+      : `_当前节点未保存代码片段，复核阶段应补充 Read 证据。_`;
+    const note = s.notes ? `\n\n判断: ${s.notes}` : "";
+    return `##### ${i + 1}. ${type}: \`${loc}\`\n\n${code}${note}`;
+  }).join("\n\n");
+  return `${warning}**数据流总览**\n\n${flow}\n\n${table}\n\n**漏洞数据流分析 / 关键代码分析**\n\n${codeBlocks}`;
 }
 
 function buildSinkChainHtml(steps) {
   if (!steps.length) return "";
-  const chain = steps.map(s => escapeHtml(s.step_type)).join(" → ");
-  const rows = steps.map((s, i) => {
-    const prefix = i === steps.length - 1 ? "└──" : "├──";
-    const loc = s.file_path ? `<code>${escapeHtml(s.file_path)}${s.line_number ? `:${s.line_number}` : ""}</code>` : "";
-    const code = s.code_snippet ? `<pre style="margin:4px 0;font-size:0.8em;background:#1e1e1e;color:#d4d4d4;padding:4px 8px;border-radius:3px;overflow-x:auto">${escapeHtml(s.code_snippet)}</pre>` : "";
-    const note = s.notes ? `<em style="color:#888;font-size:0.85em">${escapeHtml(s.notes)}</em>` : "";
-    return `<div style="margin:2px 0">${prefix} <strong>${escapeHtml(s.step_type)}</strong>: ${loc}${code}${note}</div>`;
-  });
-  return `<div style="background:#f5f5f5;border-left:3px solid #888;padding:8px 12px;font-family:monospace;font-size:0.9em;margin:8px 0">
-    <div style="color:#555;margin-bottom:6px">[SINK-CHAIN] ${chain}</div>
-    ${rows.join("\n")}
-  </div>`;
+  const sourceStatus = sourceStatusForSteps(steps);
+  const flow = escapeHtml(buildFlowLine(steps));
+  const warning = sourceStatus === "TRUE_SOURCE" ? "" :
+    `<div style="border-left:4px solid #d9822b;background:#fff8e8;padding:8px 12px;margin:10px 0;color:#6f4a00">
+      真实性提示: 当前链路 Source 状态为 <strong>${escapeHtml(sourceStatus)}</strong>，报告前复核应考虑降级。
+    </div>`;
+  const tableRows = steps.map((s, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td><strong>${escapeHtml(normalizeStepType(s.step_type))}</strong></td>
+      <td><code>${escapeHtml(stepLocation(s))}</code></td>
+      <td>${escapeHtml(stepSummary(s))}</td>
+    </tr>`).join("\n");
+  const codeBlocks = steps.map((s, i) => {
+    const type = normalizeStepType(s.step_type);
+    const loc = stepLocation(s);
+    const snippet = s.code_snippet
+      ? `<pre style="background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:4px;overflow-x:auto;font-size:0.85em;white-space:pre-wrap">${escapeHtml(s.code_snippet)}</pre>`
+      : `<p style="color:#777;font-style:italic">当前节点未保存代码片段，复核阶段应补充 Read 证据。</p>`;
+    const note = s.notes ? `<p style="margin:6px 0;color:#444"><strong>判断:</strong> ${escapeHtml(s.notes)}</p>` : "";
+    return `<section style="margin:14px 0">
+      <h5 style="margin:0 0 6px;font-size:0.95em">${i + 1}. ${escapeHtml(type)}: <code>${escapeHtml(loc)}</code></h5>
+      ${snippet}
+      ${note}
+    </section>`;
+  }).join("\n");
+  return `
+    ${warning}
+    <h4 style="margin:12px 0 6px">数据流总览</h4>
+    <pre style="background:#eef2f5;color:#263238;padding:10px 12px;border-radius:4px;overflow-x:auto;font-size:0.85em;white-space:pre-wrap">${flow}</pre>
+    <table style="border-collapse:collapse;width:100%;font-size:0.88em;margin:10px 0">
+      <thead><tr style="background:#f1f3f5"><th style="text-align:left;padding:6px;border:1px solid #ddd">#</th><th style="text-align:left;padding:6px;border:1px solid #ddd">阶段</th><th style="text-align:left;padding:6px;border:1px solid #ddd">位置</th><th style="text-align:left;padding:6px;border:1px solid #ddd">安全判断 / 证据摘要</th></tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table>
+    <h4 style="margin:16px 0 6px">漏洞数据流分析 / 关键代码分析</h4>
+    ${codeBlocks}`;
 }
 
-function generateMarkdown(session, project, findings, sinkMap, attackChains, chainSteps) {
+function generateMarkdown(session, project, findings, sinkMap, attackChains, chainSteps, verificationMap = {}) {
   const date = new Date().toISOString().slice(0, 10);
   const counts = {};
-  for (const s of SEVERITY_ORDER) counts[s] = findings.filter(f => f.severity === s).length;
+  for (const s of SEVERITY_ORDER) counts[s] = findings.filter(f => effectiveSeverity(f, verificationMap[f.id]) === s).length;
 
   let md = `# 安全审计报告\n\n`;
   md += `**项目**: ${project.name}  \n`;
@@ -341,34 +604,51 @@ function generateMarkdown(session, project, findings, sinkMap, attackChains, cha
   const prefixMap = { Critical: "C", High: "H", Medium: "M", Low: "L", Info: "I" };
   const idxMap = {};
   for (const f of findings) {
-    const p = prefixMap[f.severity] ?? "X";
+    const p = prefixMap[effectiveSeverity(f, verificationMap[f.id])] ?? "X";
     idxMap[p] = (idxMap[p] ?? 0) + 1;
     f._vid = `${p}-${String(idxMap[p]).padStart(2, "0")}`;
   }
 
+  md += buildVerificationSummaryMd(findings, sinkMap, verificationMap);
+
   md += `## 漏洞详情\n\n`;
   for (const sev of SEVERITY_ORDER) {
-    const group = findings.filter(f => f.severity === sev);
+    const group = findings.filter(f => effectiveSeverity(f, verificationMap[f.id]) === sev);
     if (!group.length) continue;
     md += `### ${sev}\n\n`;
     for (const f of group) {
+      const steps = sinkMap[f.id] ?? [];
+      const verification = verificationMap[f.id];
+      const reportSeverity = effectiveSeverity(f, verification);
       md += `#### [${f._vid}] ${f.title}\n\n`;
       md += `| 属性 | 值 |\n|------|----|\n`;
-      md += `| 严重程度 | ${f.severity} |\n`;
+      md += `| 报告等级 | ${reportSeverity} |\n`;
+      if (reportSeverity !== f.severity) md += `| 原始等级 | ${f.severity} |\n`;
       if (f.cvss_score != null) md += `| CVSS | ${f.cvss_score} |\n`;
       if (f.cwe) md += `| CWE | ${f.cwe} |\n`;
       md += `| 置信度 | ${f.confidence ?? "-"} |\n`;
       md += `| 漏洞类型 | ${f.vuln_type ?? "-"} |\n`;
       md += `| 位置 | \`${f.file_path ?? "-"}${f.line_number ? `:${f.line_number}` : ""}\` |\n`;
+      md += `| 复核结论 | ${findingVerificationStatus(f, steps, verification)} |\n`;
+      md += `| Source 状态 | ${verificationSourceStatus(steps, verification)} |\n`;
+      if (verification?.severity_action) md += `| 复核动作 | ${verification.severity_action} |\n`;
       if (f.agent_source) md += `| 发现Agent | ${f.agent_source} |\n`;
       md += `\n`;
-      if (f.description) md += `**描述**\n\n${f.description}\n\n`;
-      if (f.vuln_code) md += `**漏洞代码**\n\n\`\`\`\n${f.vuln_code}\n\`\`\`\n\n`;
-      const steps = sinkMap[f.id] ?? [];
-      if (steps.length) md += `**Sink 链**\n\n${buildSinkChainMd(steps)}\n\n`;
-      if (f.attack_vector) md += `**攻击向量**\n\n${f.attack_vector}\n\n`;
+      md += `**漏洞描述**\n\n${f.description || "报告阶段未记录漏洞描述，需回看原始 finding。"}\n\n`;
+      md += `**漏洞根因**\n\n${buildRootCause(f, steps)}\n\n`;
+      md += `**攻击者利用方法**\n\n${verification?.exploit_method || buildExploitMethod(f, steps)}\n\n`;
+      if (verification?.conclusion || verification?.true_source || verification?.key_gap) {
+        md += `**真实性复核说明**\n\n`;
+        if (verification.true_source) md += `- 真实 Source: ${verification.true_source}\n`;
+        if (verification.key_gap) md += `- 关键断点: ${verification.key_gap}\n`;
+        if (verification.conclusion) md += `- 结论: ${verification.conclusion}\n`;
+        md += `\n`;
+      }
+      if (steps.length) md += `${buildSinkChainMd(steps)}\n\n`;
+      if (!steps.length && f.vuln_code) md += `**关键代码片段**\n\n\`\`\`${langForPath(f.file_path)}\n${f.vuln_code}\n\`\`\`\n\n`;
       if (f.poc) md += `**PoC**\n\n\`\`\`\n${f.poc}\n\`\`\`\n\n`;
-      if (f.fix_suggestion) md += `**修复建议**\n\n${f.fix_suggestion}\n\n`;
+      const fixBrief = buildFixBrief(f);
+      if (fixBrief) md += `**修复提示（简要）**\n\n${fixBrief}\n\n`;
       md += `---\n\n`;
     }
   }
@@ -395,15 +675,15 @@ function generateMarkdown(session, project, findings, sinkMap, attackChains, cha
   return md;
 }
 
-function generateHtml(session, project, findings, sinkMap, attackChains, chainSteps) {
+function generateHtml(session, project, findings, sinkMap, attackChains, chainSteps, verificationMap = {}) {
   const date = new Date().toISOString().slice(0, 10);
   const counts = {};
-  for (const s of SEVERITY_ORDER) counts[s] = findings.filter(f => f.severity === s).length;
+  for (const s of SEVERITY_ORDER) counts[s] = findings.filter(f => effectiveSeverity(f, verificationMap[f.id]) === s).length;
 
   const prefixMap = { Critical: "C", High: "H", Medium: "M", Low: "L", Info: "I" };
   const idxMap = {};
   for (const f of findings) {
-    const p = prefixMap[f.severity] ?? "X";
+    const p = prefixMap[effectiveSeverity(f, verificationMap[f.id])] ?? "X";
     idxMap[p] = (idxMap[p] ?? 0) + 1;
     f._vid = `${p}-${String(idxMap[p]).padStart(2, "0")}`;
   }
@@ -418,28 +698,42 @@ function generateHtml(session, project, findings, sinkMap, attackChains, chainSt
 
   let findingsHtml = "";
   for (const sev of SEVERITY_ORDER) {
-    const group = findings.filter(f => f.severity === sev);
+    const group = findings.filter(f => effectiveSeverity(f, verificationMap[f.id]) === sev);
     if (!group.length) continue;
     findingsHtml += `<h2 style="border-bottom:2px solid #333;padding-bottom:8px;margin-top:40px">${sev}</h2>\n`;
     for (const f of group) {
       const steps = sinkMap[f.id] ?? [];
+      const verification = verificationMap[f.id];
+      const reportSeverity = effectiveSeverity(f, verification);
+      const rootCause = buildRootCause(f, steps);
+      const exploitMethod = verification?.exploit_method || buildExploitMethod(f, steps);
+      const fixBrief = buildFixBrief(f);
+      const verificationDetails = [verification?.true_source ? `<li><strong>真实 Source:</strong> ${escapeHtml(verification.true_source)}</li>` : "",
+        verification?.key_gap ? `<li><strong>关键断点:</strong> ${escapeHtml(verification.key_gap)}</li>` : "",
+        verification?.conclusion ? `<li><strong>结论:</strong> ${escapeHtml(verification.conclusion)}</li>` : ""].filter(Boolean).join("");
       findingsHtml += `
       <div id="${f._vid}" style="background:#fff;border:1px solid #ddd;border-radius:8px;padding:20px;margin:16px 0;box-shadow:0 1px 3px rgba(0,0,0,0.1)">
-        <h3 style="margin:0 0 12px">[${f._vid}] ${escapeHtml(f.title)} ${severityBadge(f.severity)}</h3>
+        <h3 style="margin:0 0 12px">[${f._vid}] ${escapeHtml(f.title)} ${severityBadge(reportSeverity)}</h3>
         <table style="border-collapse:collapse;font-size:0.9em;margin-bottom:12px">
+          ${reportSeverity !== f.severity ? `<tr><td style="padding:3px 12px 3px 0;color:#666;white-space:nowrap">原始等级</td><td>${severityBadge(f.severity)}</td></tr>` : ""}
           <tr><td style="padding:3px 12px 3px 0;color:#666;white-space:nowrap">置信度</td><td>${escapeHtml(f.confidence ?? "-")}</td></tr>
           <tr><td style="padding:3px 12px 3px 0;color:#666;white-space:nowrap">漏洞类型</td><td>${escapeHtml(f.vuln_type ?? "-")}</td></tr>
           <tr><td style="padding:3px 12px 3px 0;color:#666;white-space:nowrap">位置</td><td><code>${escapeHtml(f.file_path ?? "-")}${f.line_number ? `:${f.line_number}` : ""}</code></td></tr>
+          <tr><td style="padding:3px 12px 3px 0;color:#666">复核结论</td><td>${escapeHtml(findingVerificationStatus(f, steps, verification))}</td></tr>
+          <tr><td style="padding:3px 12px 3px 0;color:#666">Source 状态</td><td>${escapeHtml(verificationSourceStatus(steps, verification))}</td></tr>
+          ${verification?.severity_action ? `<tr><td style="padding:3px 12px 3px 0;color:#666">复核动作</td><td>${escapeHtml(verification.severity_action)}</td></tr>` : ""}
           ${f.cvss_score != null ? `<tr><td style="padding:3px 12px 3px 0;color:#666">CVSS</td><td>${f.cvss_score}</td></tr>` : ""}
           ${f.cwe ? `<tr><td style="padding:3px 12px 3px 0;color:#666">CWE</td><td>${escapeHtml(f.cwe)}</td></tr>` : ""}
           ${f.agent_source ? `<tr><td style="padding:3px 12px 3px 0;color:#666">发现Agent</td><td>${escapeHtml(f.agent_source)}</td></tr>` : ""}
         </table>
-        ${f.description ? `<p style="margin:8px 0">${escapeHtml(f.description)}</p>` : ""}
-        ${f.vuln_code ? `<details><summary style="cursor:pointer;color:#1976d2;margin:8px 0">漏洞代码</summary><pre style="background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:4px;overflow-x:auto;font-size:0.85em">${escapeHtml(f.vuln_code)}</pre></details>` : ""}
-        ${steps.length ? `<details open><summary style="cursor:pointer;color:#1976d2;margin:8px 0">Sink 链</summary>${buildSinkChainHtml(steps)}</details>` : ""}
-        ${f.attack_vector ? `<details><summary style="cursor:pointer;color:#1976d2;margin:8px 0">攻击向量</summary><p>${escapeHtml(f.attack_vector)}</p></details>` : ""}
-        ${f.poc ? `<details><summary style="cursor:pointer;color:#1976d2;margin:8px 0">PoC</summary><pre style="background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:4px;overflow-x:auto;font-size:0.85em">${escapeHtml(f.poc)}</pre></details>` : ""}
-        ${f.fix_suggestion ? `<details><summary style="cursor:pointer;color:#1976d2;margin:8px 0">修复建议</summary><p>${escapeHtml(f.fix_suggestion)}</p></details>` : ""}
+        <section style="margin:12px 0"><h4 style="margin:0 0 6px">漏洞描述</h4><p style="white-space:pre-wrap;margin:0">${escapeHtml(f.description || "报告阶段未记录漏洞描述，需回看原始 finding。")}</p></section>
+        <section style="margin:12px 0"><h4 style="margin:0 0 6px">漏洞根因</h4><p style="white-space:pre-wrap;margin:0">${escapeHtml(rootCause)}</p></section>
+        <section style="margin:12px 0"><h4 style="margin:0 0 6px">攻击者利用方法</h4><p style="white-space:pre-wrap;margin:0">${escapeHtml(exploitMethod)}</p></section>
+        ${verificationDetails ? `<section style="margin:12px 0"><h4 style="margin:0 0 6px">真实性复核说明</h4><ul style="margin:6px 0 0 18px">${verificationDetails}</ul></section>` : ""}
+        ${steps.length ? `<details open><summary style="cursor:pointer;color:#1976d2;margin:8px 0">数据流总览 / 关键代码分析</summary>${buildSinkChainHtml(steps)}</details>` : ""}
+        ${!steps.length && f.vuln_code ? `<details open><summary style="cursor:pointer;color:#1976d2;margin:8px 0">关键代码片段</summary><pre style="background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:4px;overflow-x:auto;font-size:0.85em;white-space:pre-wrap">${escapeHtml(f.vuln_code)}</pre></details>` : ""}
+        ${f.poc ? `<details open><summary style="cursor:pointer;color:#1976d2;margin:8px 0">PoC</summary><pre style="background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:4px;overflow-x:auto;font-size:0.85em;white-space:pre-wrap">${escapeHtml(f.poc)}</pre></details>` : ""}
+        ${fixBrief ? `<details><summary style="cursor:pointer;color:#1976d2;margin:8px 0">修复提示（简要）</summary><p>${escapeHtml(fixBrief)}</p></details>` : ""}
       </div>`;
     }
   }
@@ -497,6 +791,8 @@ function generateHtml(session, project, findings, sinkMap, attackChains, chainSt
     </div>
   </div>
 
+  ${buildVerificationSummaryHtml(findings, sinkMap, verificationMap)}
+
   ${findingsHtml}
   ${attackHtml}
 
@@ -534,6 +830,16 @@ const auditGenerateReport = tool({
       ).all(f.id);
     }
 
+    const verificationMap = {};
+    if (findings.length) {
+      const verificationRows = db.query(
+        `SELECT * FROM finding_verifications
+         WHERE finding_id IN (${findings.map(() => "?").join(",")})
+         ORDER BY finding_id, id`
+      ).all(...findings.map(f => f.id));
+      for (const row of verificationRows) verificationMap[row.finding_id] = row;
+    }
+
     const attackChains = db.query(
       "SELECT * FROM attack_chains WHERE session_id=? ORDER BY id"
     ).all(args.session_id);
@@ -555,8 +861,8 @@ const auditGenerateReport = tool({
     const mdPath   = join(outDir, `${slug}.md`);
     const htmlPath = join(outDir, `${slug}.html`);
 
-    const md   = generateMarkdown(session, project, findings, sinkMap, attackChains, chainSteps);
-    const html = generateHtml(session, project, findings, sinkMap, attackChains, chainSteps);
+    const md   = generateMarkdown(session, project, findings, sinkMap, attackChains, chainSteps, verificationMap);
+    const html = generateHtml(session, project, findings, sinkMap, attackChains, chainSteps, verificationMap);
 
     writeFileSync(mdPath,   md,   "utf8");
     writeFileSync(htmlPath, html, "utf8");
@@ -565,8 +871,8 @@ const auditGenerateReport = tool({
       markdown: mdPath,
       html:     htmlPath,
       findings: findings.length,
-      critical: findings.filter(f => f.severity === "Critical").length,
-      high:     findings.filter(f => f.severity === "High").length,
+      critical: findings.filter(f => effectiveSeverity(f, verificationMap[f.id]) === "Critical").length,
+      high:     findings.filter(f => effectiveSeverity(f, verificationMap[f.id]) === "High").length,
     });
   },
 });
@@ -578,6 +884,7 @@ export default async (_ctx) => ({
     audit_init_session:    auditInitSession,
     audit_save_finding:    auditSaveFinding,
     audit_save_sink_chain: auditSaveSinkChain,
+    audit_save_verification: auditSaveVerification,
     audit_save_attack_chain: auditSaveAttackChain,
     audit_complete_session: auditCompleteSession,
     audit_list_sessions:   auditListSessions,
