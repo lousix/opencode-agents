@@ -1,7 +1,7 @@
 import { tool } from "@opencode-ai/plugin";
 import { Database } from "bun:sqlite";
 import { homedir } from "os";
-import { join, dirname } from "path";
+import { join, dirname, basename } from "path";
 import { mkdirSync, existsSync, writeFileSync } from "fs";
 
 // DB stored at ~/.opencode/audit.db — shared across all projects
@@ -350,6 +350,12 @@ function escapeHtml(s) {
   return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
 
+function reportProjectName(project) {
+  return String(project?.name ?? "").trim()
+    || (project?.path ? basename(project.path) : "")
+    || "未命名项目";
+}
+
 function escapeMdCell(s) {
   return String(s ?? "-").replace(/\|/g, "\\|").replace(/\n/g, "<br>").trim() || "-";
 }
@@ -582,11 +588,12 @@ function buildSinkChainHtml(steps) {
 
 function generateMarkdown(session, project, findings, sinkMap, attackChains, chainSteps, verificationMap = {}) {
   const date = new Date().toISOString().slice(0, 10);
+  const projectName = reportProjectName(project);
   const counts = {};
   for (const s of SEVERITY_ORDER) counts[s] = findings.filter(f => effectiveSeverity(f, verificationMap[f.id]) === s).length;
 
   let md = `# 安全审计报告\n\n`;
-  md += `**项目**: ${project.name}  \n`;
+  md += `**项目**: ${projectName}  \n`;
   md += `**路径**: ${project.path ?? "-"}  \n`;
   md += `**技术栈**: ${[project.language, project.framework].filter(Boolean).join(" / ") || "-"}  \n`;
   md += `**审计模式**: ${session.mode ?? "-"}  \n`;
@@ -620,7 +627,7 @@ function generateMarkdown(session, project, findings, sinkMap, attackChains, cha
       const steps = sinkMap[f.id] ?? [];
       const verification = verificationMap[f.id];
       const reportSeverity = effectiveSeverity(f, verification);
-      md += `#### [${f._vid}] ${f.title}\n\n`;
+      md += `#### 【${projectName}】【${f._vid}】${f.title}\n\n`;
       md += `| 属性 | 值 |\n|------|----|\n`;
       md += `| 报告等级 | ${reportSeverity} |\n`;
       if (reportSeverity !== f.severity) md += `| 原始等级 | ${f.severity} |\n`;
@@ -677,6 +684,7 @@ function generateMarkdown(session, project, findings, sinkMap, attackChains, cha
 
 function generateHtml(session, project, findings, sinkMap, attackChains, chainSteps, verificationMap = {}) {
   const date = new Date().toISOString().slice(0, 10);
+  const projectName = reportProjectName(project);
   const counts = {};
   for (const s of SEVERITY_ORDER) counts[s] = findings.filter(f => effectiveSeverity(f, verificationMap[f.id]) === s).length;
 
@@ -713,7 +721,7 @@ function generateHtml(session, project, findings, sinkMap, attackChains, chainSt
         verification?.conclusion ? `<li><strong>结论:</strong> ${escapeHtml(verification.conclusion)}</li>` : ""].filter(Boolean).join("");
       findingsHtml += `
       <div id="${f._vid}" style="background:#fff;border:1px solid #ddd;border-radius:8px;padding:20px;margin:16px 0;box-shadow:0 1px 3px rgba(0,0,0,0.1)">
-        <h3 style="margin:0 0 12px">[${f._vid}] ${escapeHtml(f.title)} ${severityBadge(reportSeverity)}</h3>
+        <h3 style="margin:0 0 12px">【${escapeHtml(projectName)}】【${f._vid}】${escapeHtml(f.title)} ${severityBadge(reportSeverity)}</h3>
         <table style="border-collapse:collapse;font-size:0.9em;margin-bottom:12px">
           ${reportSeverity !== f.severity ? `<tr><td style="padding:3px 12px 3px 0;color:#666;white-space:nowrap">原始等级</td><td>${severityBadge(f.severity)}</td></tr>` : ""}
           <tr><td style="padding:3px 12px 3px 0;color:#666;white-space:nowrap">置信度</td><td>${escapeHtml(f.confidence ?? "-")}</td></tr>
@@ -761,7 +769,7 @@ function generateHtml(session, project, findings, sinkMap, attackChains, chainSt
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>安全审计报告 — ${escapeHtml(project.name)}</title>
+  <title>安全审计报告 — ${escapeHtml(projectName)}</title>
   <style>
     body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; max-width:1100px; margin:0 auto; padding:24px; background:#f8f9fa; color:#212121; }
     h1 { color:#1a1a2e; } h2 { color:#16213e; } h3 { color:#0f3460; }
@@ -773,7 +781,7 @@ function generateHtml(session, project, findings, sinkMap, attackChains, chainSt
 <body>
   <h1>安全审计报告</h1>
   <table style="font-size:0.95em;margin-bottom:24px">
-    <tr><td style="padding:3px 16px 3px 0;color:#666">项目</td><td><strong>${escapeHtml(project.name)}</strong></td></tr>
+    <tr><td style="padding:3px 16px 3px 0;color:#666">项目</td><td><strong>${escapeHtml(projectName)}</strong></td></tr>
     <tr><td style="color:#666">路径</td><td><code>${escapeHtml(project.path ?? "-")}</code></td></tr>
     <tr><td style="color:#666">技术栈</td><td>${escapeHtml([project.language, project.framework].filter(Boolean).join(" / ") || "-")}</td></tr>
     <tr><td style="color:#666">审计模式</td><td>${escapeHtml(session.mode ?? "-")}</td></tr>
