@@ -163,8 +163,29 @@
         "skill": { "*": "allow" }
       }
     },
+    "audit-verification": {
+      "description": "Report-stage verification agent: validates real Source, Source-to-Sink reachability, sanitizer effectiveness, exploitability, and writes verified facts back to the audit database.",
+      "mode": "subagent",
+      "temperature": 0.1,
+      "prompt": "{file:.opencode/agents/audit-verification.md}",
+      "tools": {
+        "write": true,
+        "edit": true,
+        "bash": true,
+        "skill": true
+      },
+      "permission": {
+        "task": {
+          "*": "allow"
+        },
+        "bash": {
+          "*": "allow"
+        },
+        "skill": { "*": "allow" }
+      }
+    },
     "audit-report": {
-      "description": "Report generation agent: severity calibration, attack chain construction, cross-agent deduplication, structured report output with graded sink chain code.",
+      "description": "Report generation agent: report-stage verification orchestration, severity calibration, attack chain construction, cross-agent deduplication, structured report output with graded sink chain code.",
       "mode": "subagent",
       "temperature": 0.2,
       "prompt": "{file:.opencode/agents/audit-report.md}",
@@ -175,6 +196,12 @@
         "skill": true
       },
       "permission": {
+        "task": {
+          "*": "allow"
+        },
+        "bash": {
+          "*": "allow"
+        },
         "skill": { "*": "allow" }
       }
     }

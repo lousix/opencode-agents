@@ -195,7 +195,12 @@ const auditSaveSinkChain = tool({
     try {
       steps = JSON.parse(args.steps);
     } catch {
+      db.close();
       return JSON.stringify({ error: "steps must be a valid JSON array" });
+    }
+    if (!Array.isArray(steps)) {
+      db.close();
+      return JSON.stringify({ error: "steps must be a JSON array" });
     }
     const insert = db.prepare(
       `INSERT INTO sink_chains (finding_id, step_order, step_type, file_path, line_number, code_snippet, notes)
@@ -212,7 +217,7 @@ const auditSaveSinkChain = tool({
 });
 
 const auditSaveVerification = tool({
-  description: "Save pre-report verification result for a finding. Call after a verification-only subagent reviews the finding.",
+  description: "Save report-stage verification result for a finding. Call from audit-verification before final report generation.",
   args: {
     finding_id:       tool.schema.number().describe("Finding ID being verified"),
     verifier_agent:   tool.schema.string().optional().describe("Agent that performed verification"),
@@ -243,6 +248,144 @@ const auditSaveVerification = tool({
     );
     db.close();
     return JSON.stringify({ verification_id: result.lastInsertRowid });
+  },
+});
+
+const auditUpdateFindingAfterVerification = tool({
+  description: "Update the canonical finding after verification. Use this to write back enriched root cause, exploit method, PoC, severity/confidence changes, and optionally replace the sink chain before final report generation.",
+  args: {
+    finding_id:       tool.schema.number().describe("Finding ID to update after verification"),
+    title:            tool.schema.string().optional().describe("Updated vulnerability title"),
+    severity:         tool.schema.string().optional().describe("Updated severity after verification"),
+    confidence:       tool.schema.string().optional().describe("Updated confidence after verification"),
+    vuln_type:        tool.schema.string().optional().describe("Updated vulnerability type"),
+    file_path:        tool.schema.string().optional().describe("Updated primary file path"),
+    line_number:      tool.schema.number().optional().describe("Updated primary line number"),
+    description:      tool.schema.string().optional().describe("Updated vulnerability description"),
+    vuln_code:        tool.schema.string().optional().describe("Updated key vulnerable code"),
+    attack_vector:    tool.schema.string().optional().describe("Updated practical attacker exploit method"),
+    poc:              tool.schema.string().optional().describe("Updated PoC payload or steps"),
+    fix_suggestion:   tool.schema.string().optional().describe("Brief fix hint, if needed"),
+    cvss_score:       tool.schema.number().optional().describe("Updated CVSS score"),
+    cwe:              tool.schema.string().optional().describe("Updated CWE"),
+    sink_chain_steps: tool.schema.string().optional().describe(
+      'Optional JSON array replacing sink chain steps. Each step: {"step_type":"Source|Transform|Sanitizer|Sink","file_path":"...","line_number":42,"code_snippet":"...","notes":"..."}'
+    ),
+  },
+  async execute(args) {
+    const db = getDb();
+    const existing = db.query("SELECT id FROM findings WHERE id=?").get(args.finding_id);
+    if (!existing) {
+      db.close();
+      return JSON.stringify({ error: `Finding ${args.finding_id} not found` });
+    }
+
+    let replacementSteps;
+    if (args.sink_chain_steps !== undefined) {
+      try {
+        replacementSteps = JSON.parse(args.sink_chain_steps);
+      } catch {
+        db.close();
+        return JSON.stringify({ error: "sink_chain_steps must be a valid JSON array" });
+      }
+      if (!Array.isArray(replacementSteps)) {
+        db.close();
+        return JSON.stringify({ error: "sink_chain_steps must be a JSON array" });
+      }
+    }
+
+    const updates = [];
+    const values = [];
+    const fields = [
+      "title", "severity", "confidence", "vuln_type", "file_path", "line_number",
+      "description", "vuln_code", "attack_vector", "poc", "fix_suggestion",
+      "cvss_score", "cwe",
+    ];
+    for (const field of fields) {
+      if (Object.prototype.hasOwnProperty.call(args, field)) {
+        updates.push(`${field}=?`);
+        values.push(args[field] ?? null);
+      }
+    }
+
+    if (updates.length) {
+      db.run(`UPDATE findings SET ${updates.join(", ")} WHERE id=?`, [...values, args.finding_id]);
+    }
+
+    let replaced_steps = 0;
+    if (replacementSteps !== undefined) {
+      db.run("DELETE FROM sink_chains WHERE finding_id=?", [args.finding_id]);
+      const insert = db.prepare(
+        `INSERT INTO sink_chains (finding_id, step_order, step_type, file_path, line_number, code_snippet, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      );
+      for (let i = 0; i < replacementSteps.length; i++) {
+        const s = replacementSteps[i];
+        insert.run([args.finding_id, i, s.step_type ?? null, s.file_path ?? null,
+                    s.line_number ?? null, s.code_snippet ?? null, s.notes ?? null]);
+      }
+      replaced_steps = replacementSteps.length;
+    }
+
+    db.close();
+    return JSON.stringify({ ok: true, updated_fields: updates.length, replaced_steps });
+  },
+});
+
+const auditGetFindingsForVerification = tool({
+  description: "Fetch findings and sink chains that need report-stage verification for a session. Use this before dispatching audit-verification.",
+  args: {
+    session_id: tool.schema.number().describe("Session ID whose findings should be verified"),
+    include_verified: tool.schema.boolean().optional().describe("Include findings that already have verification rows. Defaults to false."),
+    finding_ids: tool.schema.string().optional().describe("Optional comma-separated finding IDs to fetch, e.g. '3,7,12'"),
+  },
+  async execute(args) {
+    const db = getDb();
+    const session = db.query("SELECT id FROM audit_sessions WHERE id=?").get(args.session_id);
+    if (!session) { db.close(); return JSON.stringify({ error: `Session ${args.session_id} not found` }); }
+
+    const where = ["session_id=?"];
+    const params = [args.session_id];
+    if (args.finding_ids) {
+      const ids = args.finding_ids.split(",").map(s => parseInt(s.trim(), 10)).filter(Number.isFinite);
+      if (!ids.length) {
+        db.close();
+        return JSON.stringify({ error: "finding_ids must contain at least one numeric ID" });
+      }
+      where.push(`id IN (${ids.map(() => "?").join(",")})`);
+      params.push(...ids);
+    }
+
+    const rows = db.query(
+      `SELECT * FROM findings WHERE ${where.join(" AND ")} ORDER BY
+         CASE severity WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Medium' THEN 3 WHEN 'Low' THEN 4 ELSE 5 END,
+         id`
+    ).all(...params);
+
+    const findings = [];
+    for (const f of rows) {
+      const latestVerification = db.query(
+        "SELECT * FROM finding_verifications WHERE finding_id=? ORDER BY id DESC LIMIT 1"
+      ).get(f.id);
+      if (latestVerification && !args.include_verified) continue;
+
+      const sinkChainSteps = db.query(
+        "SELECT * FROM sink_chains WHERE finding_id=? ORDER BY step_order"
+      ).all(f.id);
+      findings.push({
+        ...f,
+        sink_chain_steps: sinkChainSteps,
+        latest_verification: latestVerification ?? null,
+      });
+    }
+
+    db.close();
+    return JSON.stringify({
+      session_id: args.session_id,
+      count: findings.length,
+      include_verified: Boolean(args.include_verified),
+      findings,
+    });
   },
 });
 
@@ -451,6 +594,43 @@ function buildFixBrief(f) {
   return compactText(f.fix_suggestion, 360);
 }
 
+function reportOrderedFindings(findings, verificationMap = {}) {
+  return [...findings].sort((a, b) => {
+    const sevDiff = SEVERITY_ORDER.indexOf(effectiveSeverity(a, verificationMap[a.id]))
+      - SEVERITY_ORDER.indexOf(effectiveSeverity(b, verificationMap[b.id]));
+    return sevDiff || a.id - b.id;
+  });
+}
+
+function assignVulnIds(findings, verificationMap = {}) {
+  const prefixMap = { Critical: "C", High: "H", Medium: "M", Low: "L", Info: "I" };
+  const idxMap = {};
+  for (const f of reportOrderedFindings(findings, verificationMap)) {
+    const p = prefixMap[effectiveSeverity(f, verificationMap[f.id])] ?? "X";
+    idxMap[p] = (idxMap[p] ?? 0) + 1;
+    f._vid = `${p}-${String(idxMap[p]).padStart(2, "0")}`;
+  }
+}
+
+function stepJudgment(step, verification) {
+  const type = normalizeStepType(step.step_type);
+  if (type === "Source") return verification?.source_status ?? "TRUE_SOURCE";
+  if (type === "Sink") return verification?.sink_status ?? "CONFIRMED";
+  if (type === "Sanitizer") return verification?.sanitizer_status ?? "UNKNOWN";
+  return step.notes ? compactText(step.notes, 120) : "传播节点";
+}
+
+function fallbackFlowSteps(f) {
+  if (!f?.file_path && !f?.vuln_code) return [];
+  return [{
+    step_type: "Sink",
+    file_path: f.file_path,
+    line_number: f.line_number,
+    code_snippet: f.vuln_code,
+    notes: "数据库未记录完整 Source→Sink 链，当前仅保留主漏洞位置。",
+  }];
+}
+
 function findingVerificationStatus(f, steps, verification) {
   if (verification?.verdict) return verification.verdict;
   if (!steps.length) return "NO_CHAIN";
@@ -521,18 +701,23 @@ function buildVerificationSummaryHtml(findings, sinkMap, verificationMap = {}) {
   </table>`;
 }
 
-function buildSinkChainMd(steps) {
-  if (!steps.length) return "";
-  const sourceStatus = sourceStatusForSteps(steps);
+function buildSinkChainMd(steps, f, verification) {
+  const displaySteps = steps.length ? steps : fallbackFlowSteps(f);
+  const sourceStatus = verificationSourceStatus(displaySteps, verification);
   const warning = sourceStatus === "TRUE_SOURCE"
     ? ""
-    : `> 真实性提示: 当前链路 Source 状态为 **${sourceStatus}**，报告前复核应考虑降级。\n\n`;
-  const flow = `\`\`\`text\n${buildFlowLine(steps)}\n\`\`\``;
-  const rows = steps.map((s, i) =>
-    `| ${i + 1} | ${escapeMdCell(normalizeStepType(s.step_type))} | \`${escapeMdCell(stepLocation(s))}\` | ${escapeMdCell(stepSummary(s))} |`
+    : `> 真实性提示: 当前链路 Source 状态为 **${sourceStatus}**，若无法补齐真实 Source，最终等级应降级。\n\n`;
+
+  if (!displaySteps.length) {
+    return `#### 四、数据流总览\n\n_当前数据库未记录 Source→Sink 数据流。该项不能作为高危结论展示，应先完成复核补链。_\n\n#### 五、漏洞数据流分析 / 关键代码分析\n\n_当前数据库未记录关键代码片段。_\n`;
+  }
+
+  const flow = `\`\`\`text\n${buildFlowLine(displaySteps)}\n\`\`\``;
+  const rows = displaySteps.map(s =>
+    `| ${escapeMdCell(normalizeStepType(s.step_type))} | \`${escapeMdCell(stepLocation(s))}\` | - | ${escapeMdCell(stepSummary(s))} | ${escapeMdCell(stepJudgment(s, verification))} |`
   ).join("\n");
-  const table = `| # | 阶段 | 位置 | 安全判断 / 证据摘要 |\n|---|------|------|--------------------|\n${rows}`;
-  const codeBlocks = steps.map((s, i) => {
+  const table = `| 阶段 | 位置 | 变量/对象 | 处理 | 安全判断 |\n|------|------|-----------|------|----------|\n${rows}`;
+  const codeBlocks = displaySteps.map((s, i) => {
     const type = normalizeStepType(s.step_type);
     const loc = stepLocation(s);
     const lang = langForPath(s.file_path);
@@ -541,54 +726,64 @@ function buildSinkChainMd(steps) {
       ? `\`\`\`${lang}\n${snippet}\n\`\`\``
       : `_当前节点未保存代码片段，复核阶段应补充 Read 证据。_`;
     const note = s.notes ? `\n\n判断: ${s.notes}` : "";
-    return `##### ${i + 1}. ${type}: \`${loc}\`\n\n${code}${note}`;
+    return `##### ${i + 1}. ${type}: ${type === "Source" ? "用户输入进入系统" : type === "Sink" ? "危险函数被触发" : "输入传播或安全处理"}\n\n位置: \`${loc}\`\n\n${code}${note}`;
   }).join("\n\n");
-  return `${warning}**数据流总览**\n\n${flow}\n\n${table}\n\n**漏洞数据流分析 / 关键代码分析**\n\n${codeBlocks}`;
+  return `#### 四、数据流总览\n\n${warning}${flow}\n\n${table}\n\n#### 五、漏洞数据流分析 / 关键代码分析\n\n${codeBlocks}\n`;
 }
 
-function buildSinkChainHtml(steps) {
-  if (!steps.length) return "";
-  const sourceStatus = sourceStatusForSteps(steps);
-  const flow = escapeHtml(buildFlowLine(steps));
+function buildSinkChainHtml(steps, f, verification) {
+  const displaySteps = steps.length ? steps : fallbackFlowSteps(f);
+  if (!displaySteps.length) {
+    return `<section><h4>四、数据流总览</h4><p><em>当前数据库未记录 Source→Sink 数据流。该项不能作为高危结论展示，应先完成复核补链。</em></p></section>
+      <section><h4>五、漏洞数据流分析 / 关键代码分析</h4><p><em>当前数据库未记录关键代码片段。</em></p></section>`;
+  }
+
+  const sourceStatus = verificationSourceStatus(displaySteps, verification);
+  const flow = escapeHtml(buildFlowLine(displaySteps));
   const warning = sourceStatus === "TRUE_SOURCE" ? "" :
     `<div style="border-left:4px solid #d9822b;background:#fff8e8;padding:8px 12px;margin:10px 0;color:#6f4a00">
-      真实性提示: 当前链路 Source 状态为 <strong>${escapeHtml(sourceStatus)}</strong>，报告前复核应考虑降级。
+      真实性提示: 当前链路 Source 状态为 <strong>${escapeHtml(sourceStatus)}</strong>，若无法补齐真实 Source，最终等级应降级。
     </div>`;
-  const tableRows = steps.map((s, i) => `
+  const tableRows = displaySteps.map(s => `
     <tr>
-      <td>${i + 1}</td>
       <td><strong>${escapeHtml(normalizeStepType(s.step_type))}</strong></td>
       <td><code>${escapeHtml(stepLocation(s))}</code></td>
+      <td>-</td>
       <td>${escapeHtml(stepSummary(s))}</td>
+      <td>${escapeHtml(stepJudgment(s, verification))}</td>
     </tr>`).join("\n");
-  const codeBlocks = steps.map((s, i) => {
+  const codeBlocks = displaySteps.map((s, i) => {
     const type = normalizeStepType(s.step_type);
     const loc = stepLocation(s);
+    const title = type === "Source" ? "用户输入进入系统" : type === "Sink" ? "危险函数被触发" : "输入传播或安全处理";
     const snippet = s.code_snippet
       ? `<pre style="background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:4px;overflow-x:auto;font-size:0.85em;white-space:pre-wrap">${escapeHtml(s.code_snippet)}</pre>`
       : `<p style="color:#777;font-style:italic">当前节点未保存代码片段，复核阶段应补充 Read 证据。</p>`;
     const note = s.notes ? `<p style="margin:6px 0;color:#444"><strong>判断:</strong> ${escapeHtml(s.notes)}</p>` : "";
     return `<section style="margin:14px 0">
-      <h5 style="margin:0 0 6px;font-size:0.95em">${i + 1}. ${escapeHtml(type)}: <code>${escapeHtml(loc)}</code></h5>
+      <h5 style="margin:0 0 6px;font-size:0.95em">${i + 1}. ${escapeHtml(type)}: ${escapeHtml(title)}</h5>
+      <p style="margin:0 0 6px">位置: <code>${escapeHtml(loc)}</code></p>
       ${snippet}
       ${note}
     </section>`;
   }).join("\n");
   return `
-    ${warning}
-    <h4 style="margin:12px 0 6px">数据流总览</h4>
-    <pre style="background:#eef2f5;color:#263238;padding:10px 12px;border-radius:4px;overflow-x:auto;font-size:0.85em;white-space:pre-wrap">${flow}</pre>
-    <table style="border-collapse:collapse;width:100%;font-size:0.88em;margin:10px 0">
-      <thead><tr style="background:#f1f3f5"><th style="text-align:left;padding:6px;border:1px solid #ddd">#</th><th style="text-align:left;padding:6px;border:1px solid #ddd">阶段</th><th style="text-align:left;padding:6px;border:1px solid #ddd">位置</th><th style="text-align:left;padding:6px;border:1px solid #ddd">安全判断 / 证据摘要</th></tr></thead>
-      <tbody>${tableRows}</tbody>
-    </table>
-    <h4 style="margin:16px 0 6px">漏洞数据流分析 / 关键代码分析</h4>
-    ${codeBlocks}`;
+    <section style="margin:12px 0"><h4 style="margin:0 0 6px">四、数据流总览</h4>
+      ${warning}
+      <pre style="background:#eef2f5;color:#263238;padding:10px 12px;border-radius:4px;overflow-x:auto;font-size:0.85em;white-space:pre-wrap">${flow}</pre>
+      <table style="border-collapse:collapse;width:100%;font-size:0.88em;margin:10px 0">
+        <thead><tr style="background:#f1f3f5"><th style="text-align:left;padding:6px;border:1px solid #ddd">阶段</th><th style="text-align:left;padding:6px;border:1px solid #ddd">位置</th><th style="text-align:left;padding:6px;border:1px solid #ddd">变量/对象</th><th style="text-align:left;padding:6px;border:1px solid #ddd">处理</th><th style="text-align:left;padding:6px;border:1px solid #ddd">安全判断</th></tr></thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </section>
+    <section style="margin:12px 0"><h4 style="margin:0 0 6px">五、漏洞数据流分析 / 关键代码分析</h4>${codeBlocks}</section>`;
 }
 
 function generateMarkdown(session, project, findings, sinkMap, attackChains, chainSteps, verificationMap = {}) {
   const date = new Date().toISOString().slice(0, 10);
   const projectName = reportProjectName(project);
+  assignVulnIds(findings, verificationMap);
+  const orderedFindings = reportOrderedFindings(findings, verificationMap);
   const counts = {};
   for (const s of SEVERITY_ORDER) counts[s] = findings.filter(f => effectiveSeverity(f, verificationMap[f.id]) === s).length;
 
@@ -607,57 +802,40 @@ function generateMarkdown(session, project, findings, sinkMap, attackChains, cha
   for (const s of SEVERITY_ORDER) md += `| ${s} | ${counts[s]} |\n`;
   md += `| **合计** | **${findings.length}** |\n\n`;
 
-  // Assign vuln IDs
-  const prefixMap = { Critical: "C", High: "H", Medium: "M", Low: "L", Info: "I" };
-  const idxMap = {};
-  for (const f of findings) {
-    const p = prefixMap[effectiveSeverity(f, verificationMap[f.id])] ?? "X";
-    idxMap[p] = (idxMap[p] ?? 0) + 1;
-    f._vid = `${p}-${String(idxMap[p]).padStart(2, "0")}`;
-  }
-
-  md += buildVerificationSummaryMd(findings, sinkMap, verificationMap);
+  md += buildVerificationSummaryMd(orderedFindings, sinkMap, verificationMap);
 
   md += `## 漏洞详情\n\n`;
-  for (const sev of SEVERITY_ORDER) {
-    const group = findings.filter(f => effectiveSeverity(f, verificationMap[f.id]) === sev);
-    if (!group.length) continue;
-    md += `### ${sev}\n\n`;
-    for (const f of group) {
-      const steps = sinkMap[f.id] ?? [];
-      const verification = verificationMap[f.id];
-      const reportSeverity = effectiveSeverity(f, verification);
-      md += `#### 【${projectName}】【${f._vid}】${f.title}\n\n`;
-      md += `| 属性 | 值 |\n|------|----|\n`;
-      md += `| 报告等级 | ${reportSeverity} |\n`;
-      if (reportSeverity !== f.severity) md += `| 原始等级 | ${f.severity} |\n`;
-      if (f.cvss_score != null) md += `| CVSS | ${f.cvss_score} |\n`;
-      if (f.cwe) md += `| CWE | ${f.cwe} |\n`;
-      md += `| 置信度 | ${f.confidence ?? "-"} |\n`;
-      md += `| 漏洞类型 | ${f.vuln_type ?? "-"} |\n`;
-      md += `| 位置 | \`${f.file_path ?? "-"}${f.line_number ? `:${f.line_number}` : ""}\` |\n`;
-      md += `| 复核结论 | ${findingVerificationStatus(f, steps, verification)} |\n`;
-      md += `| Source 状态 | ${verificationSourceStatus(steps, verification)} |\n`;
-      if (verification?.severity_action) md += `| 复核动作 | ${verification.severity_action} |\n`;
-      if (f.agent_source) md += `| 发现Agent | ${f.agent_source} |\n`;
-      md += `\n`;
-      md += `**漏洞描述**\n\n${f.description || "报告阶段未记录漏洞描述，需回看原始 finding。"}\n\n`;
-      md += `**漏洞根因**\n\n${buildRootCause(f, steps)}\n\n`;
-      md += `**攻击者利用方法**\n\n${verification?.exploit_method || buildExploitMethod(f, steps)}\n\n`;
-      if (verification?.conclusion || verification?.true_source || verification?.key_gap) {
-        md += `**真实性复核说明**\n\n`;
-        if (verification.true_source) md += `- 真实 Source: ${verification.true_source}\n`;
-        if (verification.key_gap) md += `- 关键断点: ${verification.key_gap}\n`;
-        if (verification.conclusion) md += `- 结论: ${verification.conclusion}\n`;
-        md += `\n`;
-      }
-      if (steps.length) md += `${buildSinkChainMd(steps)}\n\n`;
-      if (!steps.length && f.vuln_code) md += `**关键代码片段**\n\n\`\`\`${langForPath(f.file_path)}\n${f.vuln_code}\n\`\`\`\n\n`;
-      if (f.poc) md += `**PoC**\n\n\`\`\`\n${f.poc}\n\`\`\`\n\n`;
-      const fixBrief = buildFixBrief(f);
-      if (fixBrief) md += `**修复提示（简要）**\n\n${fixBrief}\n\n`;
-      md += `---\n\n`;
-    }
+  for (const f of orderedFindings) {
+    const steps = sinkMap[f.id] ?? [];
+    const verification = verificationMap[f.id];
+    const reportSeverity = effectiveSeverity(f, verification);
+    const status = findingVerificationStatus(f, steps, verification);
+    const sourceStatus = verificationSourceStatus(steps, verification);
+    const action = verificationAction(verification, status, sourceStatus);
+    const fixBrief = buildFixBrief(f);
+
+    md += `### 【${projectName}】【${f._vid}】${f.title}\n\n`;
+    md += `| 属性 | 值 |\n|------|----|\n`;
+    md += `| 漏洞名称 | ${escapeMdCell(f.title)} |\n`;
+    md += `| 严重程度 | ${reportSeverity} |\n`;
+    if (reportSeverity !== f.severity) md += `| 原始等级 | ${f.severity} |\n`;
+    if (f.cvss_score != null) md += `| CVSS | ${f.cvss_score} |\n`;
+    if (f.cwe) md += `| CWE | ${escapeMdCell(f.cwe)} |\n`;
+    md += `| 置信度 | ${escapeMdCell(f.confidence)} |\n`;
+    md += `| 漏洞类型 | ${escapeMdCell(f.vuln_type)} |\n`;
+    md += `| 复核结论 | ${escapeMdCell(`${status} / ${sourceStatus} / ${action}`)} |\n`;
+    md += `| 位置 | \`${escapeMdCell(f.file_path ?? "-")}${f.line_number ? `:${f.line_number}` : ""}\` |\n`;
+    if (f.agent_source) md += `| 发现Agent | ${escapeMdCell(f.agent_source)} |\n`;
+    md += `\n`;
+    md += `#### 一、漏洞描述\n\n${f.description || "报告阶段未记录漏洞描述，需回看原始 finding。"}\n\n`;
+    md += `#### 二、漏洞根因\n\n${buildRootCause(f, steps)}\n\n`;
+    md += `#### 三、攻击者利用方法\n\n${verification?.exploit_method || buildExploitMethod(f, steps)}\n\n`;
+    md += `${buildSinkChainMd(steps, f, verification)}\n`;
+    md += `#### 六、PoC\n\n`;
+    md += f.poc ? `\`\`\`text\n${f.poc}\n\`\`\`\n\n` : `_报告阶段未记录 PoC，需结合上述攻击者利用方法补充最小复现步骤。_\n\n`;
+    md += `#### 七、修复提示\n\n${fixBrief || "仅保留最短修复方向：在真实 Source 到 Sink 的边界增加有效校验、参数化或白名单控制。"}\n\n`;
+    md += `#### 八、参考\n\n${f.cwe ? `- ${f.cwe}` : "- 暂无 CWE 记录"}\n\n`;
+    md += `---\n\n`;
   }
 
   if (attackChains.length) {
@@ -685,16 +863,10 @@ function generateMarkdown(session, project, findings, sinkMap, attackChains, cha
 function generateHtml(session, project, findings, sinkMap, attackChains, chainSteps, verificationMap = {}) {
   const date = new Date().toISOString().slice(0, 10);
   const projectName = reportProjectName(project);
+  assignVulnIds(findings, verificationMap);
+  const orderedFindings = reportOrderedFindings(findings, verificationMap);
   const counts = {};
   for (const s of SEVERITY_ORDER) counts[s] = findings.filter(f => effectiveSeverity(f, verificationMap[f.id]) === s).length;
-
-  const prefixMap = { Critical: "C", High: "H", Medium: "M", Low: "L", Info: "I" };
-  const idxMap = {};
-  for (const f of findings) {
-    const p = prefixMap[effectiveSeverity(f, verificationMap[f.id])] ?? "X";
-    idxMap[p] = (idxMap[p] ?? 0) + 1;
-    f._vid = `${p}-${String(idxMap[p]).padStart(2, "0")}`;
-  }
 
   const statCards = SEVERITY_ORDER.map(s => {
     const colors = { Critical: "#d32f2f", High: "#f57c00", Medium: "#fbc02d", Low: "#388e3c", Info: "#1976d2" };
@@ -705,45 +877,39 @@ function generateHtml(session, project, findings, sinkMap, attackChains, chainSt
   }).join("\n");
 
   let findingsHtml = "";
-  for (const sev of SEVERITY_ORDER) {
-    const group = findings.filter(f => effectiveSeverity(f, verificationMap[f.id]) === sev);
-    if (!group.length) continue;
-    findingsHtml += `<h2 style="border-bottom:2px solid #333;padding-bottom:8px;margin-top:40px">${sev}</h2>\n`;
-    for (const f of group) {
-      const steps = sinkMap[f.id] ?? [];
-      const verification = verificationMap[f.id];
-      const reportSeverity = effectiveSeverity(f, verification);
-      const rootCause = buildRootCause(f, steps);
-      const exploitMethod = verification?.exploit_method || buildExploitMethod(f, steps);
-      const fixBrief = buildFixBrief(f);
-      const verificationDetails = [verification?.true_source ? `<li><strong>真实 Source:</strong> ${escapeHtml(verification.true_source)}</li>` : "",
-        verification?.key_gap ? `<li><strong>关键断点:</strong> ${escapeHtml(verification.key_gap)}</li>` : "",
-        verification?.conclusion ? `<li><strong>结论:</strong> ${escapeHtml(verification.conclusion)}</li>` : ""].filter(Boolean).join("");
-      findingsHtml += `
-      <div id="${f._vid}" style="background:#fff;border:1px solid #ddd;border-radius:8px;padding:20px;margin:16px 0;box-shadow:0 1px 3px rgba(0,0,0,0.1)">
-        <h3 style="margin:0 0 12px">【${escapeHtml(projectName)}】【${f._vid}】${escapeHtml(f.title)} ${severityBadge(reportSeverity)}</h3>
-        <table style="border-collapse:collapse;font-size:0.9em;margin-bottom:12px">
-          ${reportSeverity !== f.severity ? `<tr><td style="padding:3px 12px 3px 0;color:#666;white-space:nowrap">原始等级</td><td>${severityBadge(f.severity)}</td></tr>` : ""}
-          <tr><td style="padding:3px 12px 3px 0;color:#666;white-space:nowrap">置信度</td><td>${escapeHtml(f.confidence ?? "-")}</td></tr>
-          <tr><td style="padding:3px 12px 3px 0;color:#666;white-space:nowrap">漏洞类型</td><td>${escapeHtml(f.vuln_type ?? "-")}</td></tr>
-          <tr><td style="padding:3px 12px 3px 0;color:#666;white-space:nowrap">位置</td><td><code>${escapeHtml(f.file_path ?? "-")}${f.line_number ? `:${f.line_number}` : ""}</code></td></tr>
-          <tr><td style="padding:3px 12px 3px 0;color:#666">复核结论</td><td>${escapeHtml(findingVerificationStatus(f, steps, verification))}</td></tr>
-          <tr><td style="padding:3px 12px 3px 0;color:#666">Source 状态</td><td>${escapeHtml(verificationSourceStatus(steps, verification))}</td></tr>
-          ${verification?.severity_action ? `<tr><td style="padding:3px 12px 3px 0;color:#666">复核动作</td><td>${escapeHtml(verification.severity_action)}</td></tr>` : ""}
-          ${f.cvss_score != null ? `<tr><td style="padding:3px 12px 3px 0;color:#666">CVSS</td><td>${f.cvss_score}</td></tr>` : ""}
-          ${f.cwe ? `<tr><td style="padding:3px 12px 3px 0;color:#666">CWE</td><td>${escapeHtml(f.cwe)}</td></tr>` : ""}
-          ${f.agent_source ? `<tr><td style="padding:3px 12px 3px 0;color:#666">发现Agent</td><td>${escapeHtml(f.agent_source)}</td></tr>` : ""}
-        </table>
-        <section style="margin:12px 0"><h4 style="margin:0 0 6px">漏洞描述</h4><p style="white-space:pre-wrap;margin:0">${escapeHtml(f.description || "报告阶段未记录漏洞描述，需回看原始 finding。")}</p></section>
-        <section style="margin:12px 0"><h4 style="margin:0 0 6px">漏洞根因</h4><p style="white-space:pre-wrap;margin:0">${escapeHtml(rootCause)}</p></section>
-        <section style="margin:12px 0"><h4 style="margin:0 0 6px">攻击者利用方法</h4><p style="white-space:pre-wrap;margin:0">${escapeHtml(exploitMethod)}</p></section>
-        ${verificationDetails ? `<section style="margin:12px 0"><h4 style="margin:0 0 6px">真实性复核说明</h4><ul style="margin:6px 0 0 18px">${verificationDetails}</ul></section>` : ""}
-        ${steps.length ? `<details open><summary style="cursor:pointer;color:#1976d2;margin:8px 0">数据流总览 / 关键代码分析</summary>${buildSinkChainHtml(steps)}</details>` : ""}
-        ${!steps.length && f.vuln_code ? `<details open><summary style="cursor:pointer;color:#1976d2;margin:8px 0">关键代码片段</summary><pre style="background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:4px;overflow-x:auto;font-size:0.85em;white-space:pre-wrap">${escapeHtml(f.vuln_code)}</pre></details>` : ""}
-        ${f.poc ? `<details open><summary style="cursor:pointer;color:#1976d2;margin:8px 0">PoC</summary><pre style="background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:4px;overflow-x:auto;font-size:0.85em;white-space:pre-wrap">${escapeHtml(f.poc)}</pre></details>` : ""}
-        ${fixBrief ? `<details><summary style="cursor:pointer;color:#1976d2;margin:8px 0">修复提示（简要）</summary><p>${escapeHtml(fixBrief)}</p></details>` : ""}
-      </div>`;
-    }
+  for (const f of orderedFindings) {
+    const steps = sinkMap[f.id] ?? [];
+    const verification = verificationMap[f.id];
+    const reportSeverity = effectiveSeverity(f, verification);
+    const status = findingVerificationStatus(f, steps, verification);
+    const sourceStatus = verificationSourceStatus(steps, verification);
+    const action = verificationAction(verification, status, sourceStatus);
+    const rootCause = buildRootCause(f, steps);
+    const exploitMethod = verification?.exploit_method || buildExploitMethod(f, steps);
+    const fixBrief = buildFixBrief(f) || "仅保留最短修复方向：在真实 Source 到 Sink 的边界增加有效校验、参数化或白名单控制。";
+    findingsHtml += `
+    <article id="${f._vid}" style="background:#fff;border:1px solid #ddd;border-radius:8px;padding:20px;margin:18px 0;box-shadow:0 1px 3px rgba(0,0,0,0.1)">
+      <h3 style="margin:0 0 12px">【${escapeHtml(projectName)}】【${f._vid}】${escapeHtml(f.title)} ${severityBadge(reportSeverity)}</h3>
+      <table style="border-collapse:collapse;font-size:0.9em;margin-bottom:14px">
+        <tr><td style="padding:3px 12px 3px 0;color:#666;white-space:nowrap">漏洞名称</td><td>${escapeHtml(f.title)}</td></tr>
+        <tr><td style="padding:3px 12px 3px 0;color:#666;white-space:nowrap">严重程度</td><td>${severityBadge(reportSeverity)}</td></tr>
+        ${reportSeverity !== f.severity ? `<tr><td style="padding:3px 12px 3px 0;color:#666;white-space:nowrap">原始等级</td><td>${severityBadge(f.severity)}</td></tr>` : ""}
+        ${f.cvss_score != null ? `<tr><td style="padding:3px 12px 3px 0;color:#666">CVSS</td><td>${f.cvss_score}</td></tr>` : ""}
+        ${f.cwe ? `<tr><td style="padding:3px 12px 3px 0;color:#666">CWE</td><td>${escapeHtml(f.cwe)}</td></tr>` : ""}
+        <tr><td style="padding:3px 12px 3px 0;color:#666;white-space:nowrap">置信度</td><td>${escapeHtml(f.confidence ?? "-")}</td></tr>
+        <tr><td style="padding:3px 12px 3px 0;color:#666;white-space:nowrap">漏洞类型</td><td>${escapeHtml(f.vuln_type ?? "-")}</td></tr>
+        <tr><td style="padding:3px 12px 3px 0;color:#666">复核结论</td><td>${escapeHtml(`${status} / ${sourceStatus} / ${action}`)}</td></tr>
+        <tr><td style="padding:3px 12px 3px 0;color:#666;white-space:nowrap">位置</td><td><code>${escapeHtml(f.file_path ?? "-")}${f.line_number ? `:${f.line_number}` : ""}</code></td></tr>
+        ${f.agent_source ? `<tr><td style="padding:3px 12px 3px 0;color:#666">发现Agent</td><td>${escapeHtml(f.agent_source)}</td></tr>` : ""}
+      </table>
+      <section style="margin:12px 0"><h4 style="margin:0 0 6px">一、漏洞描述</h4><p style="white-space:pre-wrap;margin:0">${escapeHtml(f.description || "报告阶段未记录漏洞描述，需回看原始 finding。")}</p></section>
+      <section style="margin:12px 0"><h4 style="margin:0 0 6px">二、漏洞根因</h4><p style="white-space:pre-wrap;margin:0">${escapeHtml(rootCause)}</p></section>
+      <section style="margin:12px 0"><h4 style="margin:0 0 6px">三、攻击者利用方法</h4><p style="white-space:pre-wrap;margin:0">${escapeHtml(exploitMethod)}</p></section>
+      ${buildSinkChainHtml(steps, f, verification)}
+      <section style="margin:12px 0"><h4 style="margin:0 0 6px">六、PoC</h4>${f.poc ? `<pre style="background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:4px;overflow-x:auto;font-size:0.85em;white-space:pre-wrap">${escapeHtml(f.poc)}</pre>` : `<p><em>报告阶段未记录 PoC，需结合上述攻击者利用方法补充最小复现步骤。</em></p>`}</section>
+      <section style="margin:12px 0"><h4 style="margin:0 0 6px">七、修复提示</h4><p>${escapeHtml(fixBrief)}</p></section>
+      <section style="margin:12px 0"><h4 style="margin:0 0 6px">八、参考</h4><ul><li>${escapeHtml(f.cwe || "暂无 CWE 记录")}</li></ul></section>
+    </article>`;
   }
 
   let attackHtml = "";
@@ -799,8 +965,9 @@ function generateHtml(session, project, findings, sinkMap, attackChains, chainSt
     </div>
   </div>
 
-  ${buildVerificationSummaryHtml(findings, sinkMap, verificationMap)}
+  ${buildVerificationSummaryHtml(orderedFindings, sinkMap, verificationMap)}
 
+  <h2 style="border-bottom:2px solid #333;padding-bottom:8px;margin-top:40px">漏洞详情</h2>
   ${findingsHtml}
   ${attackHtml}
 
@@ -816,6 +983,7 @@ const auditGenerateReport = tool({
   args: {
     session_id: tool.schema.number().describe("Session ID to generate report for"),
     output_dir: tool.schema.string().optional().describe("Output directory for report files. Defaults to {project_path}/audit-reports/"),
+    allow_unverified: tool.schema.boolean().optional().describe("Allow generating a draft report when some findings have no verification. Defaults to false."),
   },
   async execute(args, ctx) {
     const db = getDb();
@@ -846,6 +1014,20 @@ const auditGenerateReport = tool({
          ORDER BY finding_id, id`
       ).all(...findings.map(f => f.id));
       for (const row of verificationRows) verificationMap[row.finding_id] = row;
+    }
+
+    const missingVerificationIds = findings
+      .filter(f => !verificationMap[f.id])
+      .map(f => f.id);
+    if (missingVerificationIds.length && !args.allow_unverified) {
+      db.close();
+      return JSON.stringify({
+        error: "missing_verifications",
+        message: "Final report requires every finding to be verified and written back before generation.",
+        findings: findings.length,
+        verified: findings.length - missingVerificationIds.length,
+        missing_finding_ids: missingVerificationIds,
+      });
     }
 
     const attackChains = db.query(
@@ -893,6 +1075,8 @@ export default async (_ctx) => ({
     audit_save_finding:    auditSaveFinding,
     audit_save_sink_chain: auditSaveSinkChain,
     audit_save_verification: auditSaveVerification,
+    audit_update_finding_after_verification: auditUpdateFindingAfterVerification,
+    audit_get_findings_for_verification: auditGetFindingsForVerification,
     audit_save_attack_chain: auditSaveAttackChain,
     audit_complete_session: auditCompleteSession,
     audit_list_sessions:   auditListSessions,

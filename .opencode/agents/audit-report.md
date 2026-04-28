@@ -1,5 +1,5 @@
 ---
-description: "Report generation agent: severity calibration, attack chain construction, cross-agent deduplication, structured report output with graded sink chain code."
+description: "Report generation agent: report-stage verification orchestration, severity calibration, attack chain construction, cross-agent deduplication, and structured report output with graded sink chain code."
 mode: subagent
 temperature: 0.2
 tools:
@@ -90,29 +90,33 @@ score ≥ 5 = Critical | 3-4 = High | 1-2 = Medium | ≤0 = Low
 
 ## ★ 报告前真实性复核（强制）
 
-在严重度校准和最终报告生成前，必须逐个 finding 分派给对应维度 subagent 进行 `verification-only` 复核。此阶段只审查已有发现，不寻找新漏洞。
+在严重度校准和最终报告生成前，必须逐个 finding 分派给 `@audit-verification` 进行报告阶段真实性复核。此阶段只审查已有发现，不寻找新漏洞；漏洞挖掘 agent 不承担复核执行职责。
 
 ### 分派规则
 
-| finding 类型 | 复核 Agent |
-|-------------|------------|
-| SQL/命令/SSTI/JNDI/表达式注入 | `@audit-d1-injection` |
-| 认证、授权、IDOR、业务逻辑 | `@audit-d2d3d9-control` |
-| RCE、反序列化、脚本引擎 | `@audit-d4-rce` |
-| 文件上传/下载/路径遍历/SSRF | `@audit-d5d6-file-ssrf` |
-| 加密、配置、供应链、密钥 | `@audit-d7d8d10-config` |
+| finding 类型 | 复核执行者 | 复核重点 |
+|-------------|------------|----------|
+| SQL/命令/SSTI/JNDI/表达式注入 | `@audit-verification` | 真实外部输入、拼接/表达式传播、参数化或净化有效性 |
+| 认证、授权、IDOR、业务逻辑 | `@audit-verification` | 真实入口、认证链、资源归属、业务状态约束 |
+| RCE、反序列化、脚本引擎 | `@audit-verification` | 反序列化/RCE Source、Gadget/脚本/命令 Sink 可达性 |
+| 文件上传/下载/路径遍历/SSRF | `@audit-verification` | 文件名/路径/URL 可控性、路径规范化、协议/内网限制 |
+| 加密、配置、供应链、密钥 | `@audit-verification` | 配置真实性、Profile 生效、版本边界、凭据有效性 |
 
 ### 复核 Prompt 模板
 
 ```
 [VERIFY_FINDING]
-你是 {agent_name}，仅做报告前真实性复核，不寻找新漏洞。
+你是 @audit-verification，仅做报告前真实性复核，不寻找新漏洞。
 必须加载 skill: finding-verification, anti-hallucination, sink-chain-methodology。
+session_id: {session_id}
 finding_id: {id}
 原始等级: {severity}
+漏洞类型: {vuln_type}
 漏洞标题: {title}
 文件位置: {file_path}:{line_number}
 原始描述: {description}
+原始攻击方法: {attack_vector}
+原始 PoC: {poc}
 原始 Sink 链: {sink_chain_steps}
 
 任务:
@@ -120,7 +124,9 @@ finding_id: {id}
 2. 找到真实 Source；如果找不到真实外部 Source，必须标记 SINK_ONLY 或 FALSE_POSITIVE。
 3. 逐跳核验 Source -> Transform -> Sanitizer -> Sink。
 4. 判断攻击者利用方法是否实际可行。
-5. 按 finding-verification 输出 [VERIFY] 结果。
+5. 必须先调用 audit_save_verification 保存复核结论。
+6. 必须再调用 audit_update_finding_after_verification 写回最终 finding 事实和 sink_chain_steps。
+7. 输出 [VERIFY_DONE] 摘要。
 ```
 
 ### 降级门控
@@ -209,7 +215,7 @@ Source/Sink 代码片段 5-10 行，中间节点 3-6 行。
 6. 正面发现 ── 项目做得好的安全实践
 ```
 
-**每个漏洞条目必须包含**: 编号与标题(如C-01) | 属性表(严重程度/CVSS/CWE/置信度/复核结论) | 漏洞描述 | 漏洞根因 | 攻击者利用方法 | 数据流总览 | 漏洞数据流分析/关键代码分析 | PoC | 简短修复提示
+**每个漏洞条目必须包含**: 项目标签+编号与标题(如【项目名称】【H-01】远程命令执行) | 属性表(严重程度/CVSS/CWE/置信度/复核结论) | 漏洞描述 | 漏洞根因 | 攻击者利用方法 | 数据流总览 | 漏洞数据流分析/关键代码分析 | PoC | 简短修复提示
 
 ---
 
@@ -255,30 +261,39 @@ Low/Info: 允许 [需验证]
 ## 漏洞报告模板
 
 ```markdown
-## [严重程度] 漏洞标题
+## 【项目名称】【H-01】漏洞标题
 
-### 漏洞描述
+| 属性 | 值 |
+|------|----|
+| 漏洞名称 | 漏洞标题 |
+| 严重程度 | High |
+| CWE | CWE-XXX |
+| 置信度 | 高置信 |
+| 复核结论 | VERIFIED / TRUE_SOURCE / KEEP |
+| 位置 | `path/to/file:line` |
+
+### 一、漏洞描述
 描述漏洞性质、影响资产、攻击前置条件。
 
-### 漏洞根因
+### 二、漏洞根因
 说明真实 Source、传播过程、缺失或可绕过的净化、最终 Sink。
 
-### 攻击者利用方法
+### 三、攻击者利用方法
 从攻击者视角说明如何构造输入、触发链路并获得影响。
 
-### 数据流总览
+### 四、数据流总览
 Source → Transform → Sanitizer/缺失 → Sink 的流程图和表格。
 
-### 漏洞数据流分析 / 关键代码分析
+### 五、漏洞数据流分析 / 关键代码分析
 逐节点展示真实代码，Critical/High 必须包含 Source 和 Sink 代码。
 
-### PoC
+### 六、PoC
 具体的利用步骤或payload
 
-### 修复提示
+### 七、修复提示
 仅保留最短修复方向，不展开修复代码。
 
-### 参考
+### 八、参考
 - CWE-XXX
 ```
 
@@ -288,11 +303,19 @@ Source → Transform → Sanitizer/缺失 → Sink 的流程图和表格。
 
 ## ★ 数据库驱动报告生成（替代对话框输出）
 
-> 报告内容已在各 Agent 审计过程中实时写入数据库，此阶段负责攻击链构建、去重校准、生成文件。
+> 报告内容已在各 Agent 审计过程中实时写入数据库。此阶段先由 `@audit-verification` 逐项复核并写回最终事实，再构建攻击链、去重校准、生成文件。
 
 ### 执行步骤
 
-1. **保存真实性复核结果** — 每个 subagent 返回 `[VERIFY]` 后调用:
+1. **拉取待复核 findings** — 先从数据库读取最终待复核清单，不依赖对话上下文:
+   ```
+   audit_get_findings_for_verification(session_id, include_verified=false)
+   ```
+   若返回 `count > 0`，必须对每个 finding dispatch `@audit-verification`。若 `audit_generate_report` 后续返回 `missing_verifications`，用 `finding_ids` 精确拉取缺失项重试。
+
+2. **逐项执行真实性复核** — 每个复核任务必须完成两个 DB 写入动作，不能只返回对话结论。
+
+3. **保存真实性复核结果** — `@audit-verification` 返回 `[VERIFY_DONE]` 前必须调用:
    ```
    audit_save_verification(finding_id, verifier_agent, verdict,
                            source_status, sink_status, sanitizer_status,
@@ -300,24 +323,41 @@ Source → Transform → Sanitizer/缺失 → Sink 的流程图和表格。
                            true_source?, key_gap?, exploit_method?, conclusion?)
    ```
 
-2. **构建攻击链** — 对每条候选链调用:
+4. **写回最终 finding 事实** — 将复核补充内容写回数据库:
+   ```
+   audit_update_finding_after_verification(
+     finding_id,
+     severity?, confidence?, description?, attack_vector?, poc?,
+     vuln_code?, file_path?, line_number?, cwe?, cvss_score?,
+     sink_chain_steps?
+   )
+   ```
+   规则: 真实 Source、修正后的 Source→Sink 链、攻击者利用方法、PoC、降级后的 severity/confidence 必须写回。最终报告不得只依赖 subagent 对话内容。
+
+5. **构建攻击链** — 对每条候选链调用:
    ```
    audit_save_attack_chain(session_id, chain_title, combined_severity,
                            description, finding_ids, link_descs)
    ```
 
-3. **标记完成** — 调用:
+6. **标记完成** — 调用:
    ```
    audit_complete_session(session_id)
    ```
 
-4. **生成报告文件** — 调用:
+7. **生成报告文件** — 调用:
    ```
-   audit_generate_report(session_id, output_dir?)
+   audit_generate_report(session_id, output_dir?, allow_unverified=false)
    ```
    返回 `{ markdown: "...", html: "...", findings: N, critical: N, high: N }`
+   若返回 `missing_verifications`，必须回到报告前真实性复核阶段，按 `missing_finding_ids` 补齐 `audit_save_verification` 和 `audit_update_finding_after_verification`，禁止生成正式报告。
 
-5. **在对话框输出摘要**（仅摘要，不重复完整报告）:
+8. **在对话框展示最终 Markdown 报告** — 生成文件后必须 Read 返回的 Markdown 路径，并按原报告模板输出到对话框:
+   - 若报告 ≤ 15000 字，直接输出完整 Markdown 报告正文。
+   - 若报告 > 15000 字，按漏洞条目拆分输出，并标注 `第 N/M 部分`；不得只输出摘要。
+   - 对话框展示必须保留 `【项目名称】【H-01】标题`、属性表、`一、漏洞描述` 到 `八、参考` 的章节结构。
+
+9. **最后补充文件路径摘要**:
    ```
    ✅ 报告已生成
    - Markdown: {markdown_path}

@@ -18,7 +18,7 @@ description: "Structured security audit report template focused on exploit narra
 6. 正面发现 ── 项目做得好的安全实践
 ```
 
-**每个漏洞条目必须包含**: 编号与标题(如C-01) | 属性表(严重程度/CVSS/CWE/置信度/复核结论) | 漏洞描述 | 漏洞根因 | 攻击者利用方法 | 数据流总览 | 漏洞数据流分析/关键代码分析 | PoC | 简短修复提示
+**每个漏洞条目必须包含**: 项目标签+编号与标题(如【项目名称】【H-01】远程命令执行) | 属性表(严重程度/CVSS/CWE/置信度/复核结论) | 漏洞描述 | 漏洞根因 | 攻击者利用方法 | 数据流总览 | 漏洞数据流分析/关键代码分析 | PoC | 简短修复提示
 
 ## 报告质量标准
 
@@ -34,10 +34,11 @@ description: "Structured security audit report template focused on exploit narra
 ## 漏洞报告模板
 
 ````markdown
-## [严重程度] 漏洞标题
+## 【项目名称】【H-01】漏洞标题
 
 | 属性 | 值 |
 |------|----|
+| 漏洞名称 | 漏洞标题 |
 | 严重程度 | High |
 | CWE | CWE-89 |
 | 置信度 | 高置信 |

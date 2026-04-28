@@ -113,19 +113,6 @@ permission:
 
 ---
 
-## ★ Verification-Only Mode（报告前真实性复核）
-
-当 prompt 包含 `[VERIFY_FINDING]` 或 `verification-only` 时:
-- 必须加载 `finding-verification`、`anti-hallucination`
-- 只复核给定 finding，不寻找新漏洞，不扩展新攻击面
-- 配置/加密/供应链 finding 必须确认配置真实存在、Profile 生效路径、版本边界和运行时可达性
-- 硬编码密钥必须判断是否为真实生产凭据、测试样例、占位符或不可用假值
-- 若 Source 是部署者配置或管理员输入，通常标记 `CONDITIONAL_SOURCE` 并建议降级
-- 文件/版本/配置不存在时，输出 `FALSE_POSITIVE`
-- 输出必须使用 finding-verification 的 `[VERIFY]` 格式
-
----
-
 ## ★ 数据库写入规则（强制执行）
 
 **每发现一个漏洞，立即调用 `audit_save_finding` 写入数据库，不等报告阶段。**

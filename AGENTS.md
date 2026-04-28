@@ -24,10 +24,10 @@
         │                                              │
         └──────────────────────────────────────────────┘
                            │
-                    audit-evaluation → audit-report
+                    audit-evaluation → audit-verification → audit-report
 ```
 
-- **Agent 定义**: `.opencode/agents/` — 包含 code-audit (主调度器) 及 8 个专业 Subagent
+- **Agent 定义**: `.opencode/agents/` — 包含 code-audit (主调度器) 及 9 个专业 Subagent
 - **Skill 知识库**: `.opencode/skills/` — 可复用的方法论模块 (anti-hallucination, anti-confirmation-bias, attack-chain, taint-analysis 等)
 - **参考文档**: `references/` — 核心方法论、语言模块、框架模块、安全领域、Checklist、WooYun案例库
 

@@ -198,10 +198,11 @@ State: NEXT_ROUND（增量补漏）
 
 State: VERIFY_FINDINGS（报告前真实性复核）
   ┌──────────────────────────────────────────────────────────────┐
-  │ Entry: dispatch @audit-report 执行 pre-report verification    │
-  │ 对每个 finding 按漏洞类型分派原维度 Agent 进行 verification-only│
+  │ Entry: dispatch @audit-report 组织 pre-report verification    │
+  │ @audit-report 对每个 finding 分派 @audit-verification          │
   │ 复核重点: 真实 Source、Source→Sink 可达性、净化是否有效、利用方法│
   │ 门控: Critical/High 必须有 TRUE_SOURCE；仅 Sink 命中必须降级      │
+  │ DB: 拉取待复核 findings → 保存复核结论 → 写回 finding/sink chain       │
   │ 输出: VERIFIED / PARTIAL / SINK_ONLY / FALSE_POSITIVE + 降级动作 │
   └──────────────────────────────────────────────────────────────┘
       ↓ 门控通过
@@ -227,6 +228,7 @@ State: 报告输出要求
 | `@audit-d5d6-file-ssrf` | D5+D6 | sink-driven | File/SSRF signals |
 | `@audit-d7d8d10-config` | D7+D8+D10 | config-driven | Always in standard/deep |
 | `@audit-evaluation` | Evaluation | analysis | After each round |
+| `@audit-verification` | Verification | report-stage validation | Before final report |
 | `@audit-report` | Report | synthesis | Final stage |
 
 ### Agent Splitting Constraints
