@@ -170,11 +170,26 @@ T5 功能发现: Grep 快速探测 + 结构推理 → 激活 D1-D10 维度
 ## 端点-权限矩阵生成（Control-driven 审计输入，D3/D9 必需）
 
 基于 Step 1.4 路由发现 + Step 1.5 Filter/中间件链，生成:
-{端点路径, HTTP方法, 认证要求, 权限注解, 资源归属校验}
+{端点路径, HTTP方法, 认证要求, 权限注解, 资源归属校验, JalorOperation是否存在, ServiceAudit是否存在, ServiceAudit.message, message参数引用, 方法参数名}
 
 此矩阵是 D3+D9 Agent 的输入，等同于 Sink 列表之于 D1。
 生成方法: Grep @RequestMapping/@GetMapping 等 → 提取路径 → 对每个 Controller 检查类/方法级权限注解 → 记录到矩阵。
 无后台管理的纯 API 项目: 矩阵仍需生成（覆盖 IDOR 检查）。
+
+### Java Spring / Jalor 临时专项
+
+当技术栈为 Java Web 且出现 `@JalorOperation` / `@ServiceAudit` 注解时，额外记录以下字段:
+- 每个接口是否存在 `@JalorOperation`
+- 对所有非 `GET` 接口，是否存在 `@ServiceAudit`
+- `@ServiceAudit.message` 是否存在且非空
+- `message` 中的参数占位符是否与方法签名参数名一致
+
+`message` 参数提取优先支持以下占位形式:
+- `{userId}`
+- `${userId}`
+- `#{userId}`
+
+若占位符为 `dto.id` 等嵌套写法，至少要求根参数 `dto` 在方法签名中真实存在。
 
 ---
 
@@ -239,6 +254,6 @@ IoT/嵌入式: D7(++), D2(++), D5(+), D10(+)
 关键模块: {列表}
 维度权重: {D1-D10 权重分配}
 SKIP列表: {已排除的攻击面}
-端点-权限矩阵: {端点数量, 已验证权限数}
+端点-权限矩阵: {端点数量, 已验证权限数, JalorOperation覆盖数, 非GET ServiceAudit覆盖数, message参数已校验数}
 认证链: {Token类型, 验证逻辑, 密钥来源, 白名单路径}
 ```

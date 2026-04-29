@@ -67,6 +67,19 @@
 - CRUD 中 delete/update 缺少权限注解而 read 有 = **High (授权不一致)**
 - 管理员接口无角色验证 = **Critical (垂直越权)**
 
+### D3 临时场景: Spring / Jalor
+
+当项目使用基于 Spring 二开的 Jalor 框架时，按以下临时规则覆盖每个 Controller 接口:
+1. 每个接口方法必须有 `@JalorOperation()`
+2. 所有非 `GET` 接口必须有 `@ServiceAudit`
+3. `@ServiceAudit.message` 必须存在且重点校验其参数引用
+4. `message` 中的参数名必须与方法签名中的参数声明名一致；若使用 `dto.id`，至少要求 `dto` 存在
+
+**临时判定规则**:
+- 任一映射方法缺少 `@JalorOperation()` = **High（鉴权缺失）**
+- 非 `GET` 缺少 `@ServiceAudit` = **Medium（审计日志缺失）**
+- `@ServiceAudit.message` 为空或参数名不匹配 = **Medium（日志审计不可追踪）**
+
 ## D4: 反序列化
 
 **关键问题**:
