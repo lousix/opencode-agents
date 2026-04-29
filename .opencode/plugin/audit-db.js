@@ -499,6 +499,21 @@ function reportProjectName(project) {
     || "未命名项目";
 }
 
+function reportFileProjectName(project) {
+  return reportProjectName(project)
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/\s+/g, "_")
+    .replace(/-+/g, "-")
+    .replace(/_+/g, "_")
+    .replace(/^[-_.]+|[-_.]+$/g, "")
+    || "未命名项目";
+}
+
+function reportTimestamp(date = new Date()) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
 function escapeMdCell(s) {
   return String(s ?? "-").replace(/\|/g, "\\|").replace(/\n/g, "<br>").trim() || "-";
 }
@@ -1047,7 +1062,7 @@ const auditGenerateReport = tool({
       ?? (project.path ? join(project.path, "audit-reports") : join(ctx.directory, "audit-reports"));
     mkdirSync(outDir, { recursive: true });
 
-    const slug = `session-${args.session_id}_${new Date().toISOString().slice(0,10)}`;
+    const slug = `${reportFileProjectName(project)}-${args.session_id}-${reportTimestamp()}`;
     const mdPath   = join(outDir, `${slug}.md`);
     const htmlPath = join(outDir, `${slug}.html`);
 
