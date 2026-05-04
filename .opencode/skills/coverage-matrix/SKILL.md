@@ -76,6 +76,12 @@ description: "Two-layer checklist architecture with D1-D10 security coverage mat
 - ⚠️浅覆盖 = 仅 Grep pattern 未系统枚举
 - ❌未覆盖 = 未执行 Control-driven 审计
 
+**Harness 扩展覆盖追加**:
+- 若 `[ACTIVE_EXTENSIONS]` 中存在覆盖 D3/D9 的扩展 Skill，D3/D9 覆盖判定必须追加该扩展的 Coverage / Agent Contract requirements
+- 未执行 active extension required checks 时，即使已做一般性 CRUD/IDOR 对比，也只能标记为 ⚠️浅覆盖
+- 扩展覆盖状态必须写入 Agent HEADER 的 `ACTIVE_EXTENSIONS`
+- 示例: `audit-ext-jalor` 的接口权限与审计日志规则只定义在其 Skill/Reference 中，不写入通用覆盖矩阵
+
 ### Config-driven 维度 (D2/D7/D8/D10)
 - ✅已覆盖 = 核心配置项均已检查 + 版本/算法已对比基线
 - ⚠️浅覆盖 = 仅检查了部分配置

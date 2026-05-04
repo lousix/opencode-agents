@@ -20,6 +20,9 @@ description: "Agent contract templates for R1 and R2+ rounds, including output f
 [Turn预留]   turns_used ≥ max_turns - 3 时停止探索，立即产出结构化输出
 [超时策略]   Bash timeout ≤30s, Grep 超时→缩小 path→连续失败 2 次→跳过
 [审计策略]   sink-driven | control-driven | config-driven
+[HARNESS_PROFILE]  语言画像、技术栈画像、场景画像、内部知识状态
+[ACTIVE_EXTENSIONS] 已激活 audit-ext-* / audit-vuln-* Skill、激活原因、适用 Agent/维度
+[CONTEXT_GAPS] AI 自主探索后仍需人工补充的问题，不阻塞当前审计
 [轮次目标]   Round N 的目标函数 + 方法关键词
 [前轮输入]   Round N≥2 时的跨轮传递结构
 [增量约束]   R2+ 禁止重读 FILES_READ 文件、重复 GREP_DONE 模式
@@ -56,6 +59,7 @@ description: "Agent contract templates for R1 and R2+ rounds, including output f
 COVERAGE: D1=✅(3,fan=5/12), D2=⚠️(1,fan=1/8), D3=❌, ...
   sink-driven: fan=已追踪文件数/Grep命中文件数
   control-driven(D3/D9): epr=已验证端点数/矩阵总端点数, crud_types=N
+ACTIVE_EXTENSIONS: {skill=done|partial|skipped(reason)}
 UNCHECKED: D1:[orderBy injection]: ORDER BY ${param} | ...
 UNFINISHED: {描述}|{原因}, ...
 STATS: tools={N}/50 | files_read={N} | grep_patterns={N} | endpoints_audited={N}/{total} | time=~{N}min
@@ -100,6 +104,9 @@ HOTSPOTS: {file:line:断点描述} | ...
 ```
 ---Agent Contract---
 1. 搜索路径（搜索前先使用Grep工具确认文件完整路径，再使用Read工具读取）: {paths}。排除: {excludes}。
+1.1 Harness Profile: {HARNESS_PROFILE}。
+1.2 Active Extensions: {ACTIVE_EXTENSIONS}。若存在适用于当前 Agent/维度的扩展 Skill，必须加载并执行其 Agent Contract Additions / Finding Rules / Verification Rules。
+1.3 Context Gaps: {CONTEXT_GAPS}。不得因上下文缺失停止审计；用代码证据优先，并在输出中标注未确认假设。
 2. 必须使用 Grep/Glob/Read 工具。禁止 Bash 中 grep/find/cat。
 3. 40 ≤ 工具调用 ≤ 400 次，Bash ≤ 300 次。max_turns: {N}。
    ★ Turn 预留: turns_used ≥ max_turns-3 时立即停止探索，产出结构化输出。
@@ -133,6 +140,7 @@ HOTSPOTS: {file:line:断点描述} | ...
 ```
 ---Agent Contract (R2+)---
 1-7. [与 R1 相同的基础合约，含 Turn 预留规则]
+1.5 Harness Profile / Active Extensions / Context Gaps 继续继承 R1；R2+ 只补未覆盖的扩展检查，不重复已完成扩展规则。
 7.5 数据转换管道追踪: 同 R1 #9。优先追踪 HOTSPOTS 中间转换层。
 8. 前轮传递:
    COVERED: {dimensions}

@@ -29,11 +29,13 @@ permission:
 ## Skill 加载规则（双通道）
 
 0. 对于调用的skill中提到的参考文档必须读取
-1. 尝试: skill({ name: "tech-stack-router" })
-2. 若失败: Read(".opencode/skills/tech-stack-router/SKILL.md")
-3. 尝试: skill({ name: "anti-hallucination" })
-4. 若失败: Read(".opencode/skills/anti-hallucination/SKILL.md")
-5. references/ 文件: 始终使用 Read("references/...")
+1. 尝试: skill({ name: "audit-harness" })
+2. 若失败: Read(".opencode/skills/audit-harness/SKILL.md")
+3. 尝试: skill({ name: "tech-stack-router" })
+4. 若失败: Read(".opencode/skills/tech-stack-router/SKILL.md")
+5. 尝试: skill({ name: "anti-hallucination" })
+6. 若失败: Read(".opencode/skills/anti-hallucination/SKILL.md")
+7. references/ 文件: 始终使用 Read("references/...")
 
 
 ---
@@ -43,12 +45,35 @@ permission:
 Phase 1 是审计的基础。本 Agent 负责完成以下全部产出，后续所有审计 Agent 依赖这些产出。
 
 **核心产出（门控条件，全部满足才可进入下一状态）**:
+- □ Harness Profile（语言画像、技术栈画像、场景画像、内部知识状态）
+- □ Active Extensions（已激活扩展 Skill、激活原因、适用 Agent/维度）
+- □ Context Gaps（AI 自主探索后仍需人工补充的信息）
 - □ 核心代码目录列表（写入 Agent Contract 的 [搜索路径]）
 - □ 排除目录列表（frontend, test, build, node_modules 等）
 - □ 攻击面地图（五层推导结果，标注各 D1-D10 维度激活状态）
 - □ 维度权重矩阵（基于项目类型调整）
 - □ Agent 切分方案（按"可并行 + 不重叠"原则）
 - □ ★ 端点-权限矩阵（Control-driven 审计输入，D3/D9 必需）
+
+---
+
+## Step 0: Harness Context Negotiation（必须在攻击面测绘前完成）
+
+执行顺序:
+1. 先自主探索代码与配置，形成初始语言/技术栈/场景/暴露模式判断
+2. 再读取目标项目根目录 `audit-context.md`（若存在）
+3. 将人工上下文与代码证据合并:
+   - 人工上下文能解释代码证据时，采用并记录为 `context_applied`
+   - 人工上下文与代码证据冲突时，以代码证据为准，并记录 `context_conflicts`
+   - 人工上下文缺失时，不阻塞审计，记录到 `[CONTEXT_GAPS]`
+4. 根据代码信号与人工上下文激活扩展 Skill:
+   - 内部框架/特殊场景: `.opencode/skills/audit-ext-{name}/SKILL.md`
+   - 新漏洞类型/利用方式: `.opencode/skills/audit-vuln-{name}/SKILL.md`
+   - 不要在目标项目 `.opencode/skills` 下执行 Glob；目标项目没有该目录时属于正常情况
+   - 优先按候选名调用 `skill({ name: "{extension}" })`，失败时再读取审计框架自身的 Skill 文件
+   - 只有确认当前工作区存在审计框架 `.opencode/skills` 目录时，才枚举 `audit-ext-*` / `audit-vuln-*`
+
+扩展 Skill 激活后必须读取其 `SKILL.md`，并把 Recon Additions 合并进本阶段输出。
 
 ---
 
@@ -170,11 +195,23 @@ T5 功能发现: Grep 快速探测 + 结构推理 → 激活 D1-D10 维度
 ## 端点-权限矩阵生成（Control-driven 审计输入，D3/D9 必需）
 
 基于 Step 1.4 路由发现 + Step 1.5 Filter/中间件链，生成:
-{端点路径, HTTP方法, 认证要求, 权限注解, 资源归属校验}
+{端点路径, HTTP方法, 认证要求, 权限注解, 资源归属校验, 方法参数名, 暴露模式, 扩展字段(extension_field_map)}
 
 此矩阵是 D3+D9 Agent 的输入，等同于 Sink 列表之于 D1。
 生成方法: Grep @RequestMapping/@GetMapping 等 → 提取路径 → 对每个 Controller 检查类/方法级权限注解 → 记录到矩阵。
 无后台管理的纯 API 项目: 矩阵仍需生成（覆盖 IDOR 检查）。
+
+### Harness 扩展字段
+
+当 `[ACTIVE_EXTENSIONS]` 中存在适用于 D3/D9 或当前技术栈的扩展 Skill 时，端点-权限矩阵必须追加该扩展定义的字段。
+
+执行要求:
+- 读取扩展 Skill 的 `Recon Additions` 与 `Agent Contract Additions`
+- 将扩展字段放入 `extension_field_map`，不要写死到通用矩阵结构
+- 输出每个扩展的覆盖摘要，例如 `{audit-ext-jalor: endpoints=N, checked=M, gaps=K}`
+- 未识别到扩展字段时，保留通用矩阵，不得猜测内部框架语义
+
+示例: 若激活 `audit-ext-jalor`，Jalor 接口权限与审计日志字段由 `.opencode/skills/audit-ext-jalor/SKILL.md` 定义，本文件只负责承载其矩阵字段与覆盖摘要。
 
 ---
 
@@ -231,6 +268,18 @@ IoT/嵌入式: D7(++), D2(++), D5(+), D10(+)
 **必须输出格式**:
 
 ```
+[HARNESS_PROFILE]
+语言画像: {primary_languages, secondary_languages, mixed_language_boundaries}
+技术栈画像: {frameworks, build_tools, deployment_profiles}
+场景画像: {business_domain, exposure_modes, trust_boundaries}
+内部知识: {target audit-context.md: present|missing, context_applied, context_conflicts}
+
+[ACTIVE_EXTENSIONS]
+skills: {skill_name, activation_reason, applies_to_agents, applies_to_dimensions, references_loaded}
+
+[CONTEXT_GAPS]
+待人工补充: {language_uncertainty, internal_frameworks, deployment_exposure, business_rules, vuln_focus}
+
 [RECON]
 项目规模: {X files, Y directories}
 技术栈: {language, framework, version}
@@ -239,6 +288,6 @@ IoT/嵌入式: D7(++), D2(++), D5(+), D10(+)
 关键模块: {列表}
 维度权重: {D1-D10 权重分配}
 SKIP列表: {已排除的攻击面}
-端点-权限矩阵: {端点数量, 已验证权限数}
+端点-权限矩阵: {端点数量, 已验证权限数, 资源归属校验数, extension_coverage={skill: summary}}
 认证链: {Token类型, 验证逻辑, 密钥来源, 白名单路径}
 ```

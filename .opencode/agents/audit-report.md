@@ -25,7 +25,7 @@ permission:
 # Audit Report Generation Agent
 
 > 报告生成 — 严重度校准、攻击链构建、跨Agent去重、结构化报告输出
-> 报告输出规则：在对话框显示，报告不可省略漏洞sink等详细信息的描述，报告长度不超过15000字，可精简其余部分的内容描述
+> 报告输出规则：在对话框显示，报告不可省略漏洞sink等详细信息的描述
 
 ## Skill 加载规则（双通道）
 
@@ -353,8 +353,8 @@ Source → Transform → Sanitizer/缺失 → Sink 的流程图和表格。
    若返回 `missing_verifications`，必须回到报告前真实性复核阶段，按 `missing_finding_ids` 补齐 `audit_save_verification` 和 `audit_update_finding_after_verification`，禁止生成正式报告。
 
 8. **在对话框展示最终 Markdown 报告** — 生成文件后必须 Read 返回的 Markdown 路径，并按原报告模板输出到对话框:
-   - 若报告 ≤ 15000 字，直接输出完整 Markdown 报告正文。
-   - 若报告 > 15000 字，按漏洞条目拆分输出，并标注 `第 N/M 部分`；不得只输出摘要。
+   - 若报告 ≤ 30000 字，直接输出完整 Markdown 报告正文。
+   - 若报告 > 30000 字，按漏洞条目拆分输出，并标注 `第 N/M 部分`；不得只输出摘要。
    - 对话框展示必须保留 `【项目名称】【H-01】标题`、属性表、`一、漏洞描述` 到 `八、参考` 的章节结构。
 
 9. **最后补充文件路径摘要**:
