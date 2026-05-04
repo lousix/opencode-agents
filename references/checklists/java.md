@@ -67,18 +67,17 @@
 - CRUD 中 delete/update 缺少权限注解而 read 有 = **High (授权不一致)**
 - 管理员接口无角色验证 = **Critical (垂直越权)**
 
-### D3 临时场景: Spring / Jalor
+### D3 Harness 扩展提示
 
-当项目使用基于 Spring 二开的 Jalor 框架时，按以下临时规则覆盖每个 Controller 接口:
-1. 每个接口方法必须有 `@JalorOperation()`
-2. 所有非 `GET` 接口必须有 `@ServiceAudit`
-3. `@ServiceAudit.message` 必须存在且重点校验其参数引用
-4. `message` 中的参数名必须与方法签名中的参数声明名一致；若使用 `dto.id`，至少要求 `dto` 存在
+若 Recon / Harness 激活了 `audit-ext-*` 或 `audit-vuln-*` 扩展 Skill，D3 覆盖必须追加该扩展定义的接口权限、业务场景或内部框架规则。
 
-**临时判定规则**:
-- 任一映射方法缺少 `@JalorOperation()` = **High（鉴权缺失）**
-- 非 `GET` 缺少 `@ServiceAudit` = **Medium（审计日志缺失）**
-- `@ServiceAudit.message` 为空或参数名不匹配 = **Medium（日志审计不可追踪）**
+执行要求:
+- 内部框架语义不得写入 Java 通用 checklist
+- 扩展规则以 `.opencode/skills/{extension}/SKILL.md` 为准
+- 扩展 reference 以 `references/extensions/{name}.md` 或扩展声明路径为准
+- 通用 Java D3 仍需覆盖 IDOR、CRUD 权限一致性、管理员接口、批量操作和多租户隔离
+
+示例: Jalor 专项规则见 `.opencode/skills/audit-ext-jalor/SKILL.md` 与 `references/extensions/jalor.md`。
 
 ## D4: 反序列化
 

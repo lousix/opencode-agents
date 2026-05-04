@@ -56,16 +56,30 @@ Must output: `[MODE] {standard|deep}`
 ### Step 2: 文档加载
 | 模式 | 必须加载的 skill / 文档 |
 |------|----------------------|
-| standard | + skill: coverage-matrix, audit-phase-methodology + Read: references/checklists/coverage_matrix.md + 对应语言 checklist |
-| deep | + skill: agent-contract, tech-stack-router, attack-chain, severity-rating, sink-chain-methodology + Read: references/checklists/coverage_matrix.md + 对应语言 checklist |
+| standard | + skill: audit-harness, coverage-matrix, audit-phase-methodology + Read: references/checklists/coverage_matrix.md + 对应语言 checklist |
+| deep | + skill: audit-harness, agent-contract, tech-stack-router, attack-chain, severity-rating, sink-chain-methodology + Read: references/checklists/coverage_matrix.md + 对应语言 checklist |
 
 Must output: `[LOADED] {实际加载的 skill/文档列表，含行数}`
 
 ### Step 3: 侦察（Reconnaissance）
 Dispatch `@audit-recon` subagent for target project attack surface mapping.
 
+`@audit-recon` 必须先执行自主探索，再读取目标项目根目录的 `audit-context.md`（若存在）。人工上下文只补充或纠正自研判结果，不替代代码证据。侦察阶段同时负责生成 Harness Profile 并激活扩展 Skill。
+
 Must output:
 ```
+[HARNESS_PROFILE]
+语言画像: {primary_languages, secondary_languages, mixed_language_boundaries}
+技术栈画像: {frameworks, build_tools, deployment_profiles}
+场景画像: {business_domain, exposure_modes, trust_boundaries}
+内部知识: {target audit-context.md 是否存在, 已采用/冲突/缺失}
+
+[ACTIVE_EXTENSIONS]
+skills: {audit-ext-* / audit-vuln-* 列表, 激活原因, 适用 Agent/维度}
+
+[CONTEXT_GAPS]
+待人工补充: {语言/技术栈/场景/内部框架/部署暴露面/漏洞偏好}
+
 [RECON]
 项目规模: {X files, Y directories}
 技术栈: {language, framework, version}
@@ -89,6 +103,9 @@ standard template:
 [PLAN]
 模式: {mode}
 技术栈: {from Step 3}
+Harness Profile: {from Step 3}
+Active Extensions: {from Step 3}
+Context Gaps: {from Step 3, 若无则 none}
 扫描维度: {计划覆盖的 D1-D10 维度}
 已加载文档: {from Step 2}
 ```
@@ -99,6 +116,9 @@ deep template (all fields required):
 模式: deep
 项目规模: {from Step 3}
 技术栈: {from Step 3}
+Harness Profile: {from Step 3}
+Active Extensions: {from Step 3}
+Context Gaps: {from Step 3, 若无则 none}
 维度权重: {项目类型维度权重，如 CMS: D5(++), D1(+), D3(+), D6(+)}
 Agent 方案: {每个 Agent 负责的维度和 max_turns}
 Agent 数量: {小型(<10K) 2-3, 中型(10K-100K) 3-5, 大型(>100K) 5-9}
@@ -156,6 +176,9 @@ State: PHASE_1_RECON（信息收集）
   │   T5 功能发现: Grep 快速探测 + 结构推理 → 激活 D1-D10 维度  │
   │                                                              │
   │ Phase 1 产出（门控条件，全部满足才可进入下一状态）:            │
+  │   □ Harness Profile（语言/技术栈/场景/内部知识/暴露模式）     │
+  │   □ Active Extensions（扩展 Skill、激活原因、适用维度）       │
+  │   □ Context Gaps（需要人工补充的信息，不阻塞自主审计）        │
   │   □ 核心代码目录列表                                         │
   │   □ 排除目录列表                                             │
   │   □ 攻击面地图（五层推导结果）                               │
@@ -261,6 +284,13 @@ R2: determined by ROUND_N_EVALUATION gap count
 
 ### Agent Contract Loading
 Before dispatching each subagent, load `skill({ name: "agent-contract" })` and inject the contract template into the subagent prompt with project-specific values.
+
+Agent Contract 必须携带:
+- `[HARNESS_PROFILE]` from `@audit-recon`
+- `[ACTIVE_EXTENSIONS]` from `@audit-recon`
+- `[CONTEXT_GAPS]` from `@audit-recon`
+
+若 `[ACTIVE_EXTENSIONS]` 包含适用于当前 Agent/维度的 `audit-ext-*` 或 `audit-vuln-*` Skill，调度器必须在 prompt 中明确要求该 Agent 加载并执行对应扩展规则。
 
 ## 7. Truncation Detection and Recovery (主线程截断检测)
 

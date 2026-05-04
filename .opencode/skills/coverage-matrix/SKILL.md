@@ -76,12 +76,11 @@ description: "Two-layer checklist architecture with D1-D10 security coverage mat
 - ⚠️浅覆盖 = 仅 Grep pattern 未系统枚举
 - ❌未覆盖 = 未执行 Control-driven 审计
 
-**Jalor 临时专项**:
-- 若 Java Spring 项目中出现 `@JalorOperation` 或 `@ServiceAudit`，D3 覆盖必须追加:
-- 每个映射接口是否存在 `@JalorOperation()`
-- 所有非 `GET` 接口是否存在 `@ServiceAudit`
-- `@ServiceAudit.message` 是否非空，且参数引用是否与方法签名参数名一致
-- 若以上三项未检查，即使已做一般性 CRUD/IDOR 对比，也只能标记为 ⚠️浅覆盖
+**Harness 扩展覆盖追加**:
+- 若 `[ACTIVE_EXTENSIONS]` 中存在覆盖 D3/D9 的扩展 Skill，D3/D9 覆盖判定必须追加该扩展的 Coverage / Agent Contract requirements
+- 未执行 active extension required checks 时，即使已做一般性 CRUD/IDOR 对比，也只能标记为 ⚠️浅覆盖
+- 扩展覆盖状态必须写入 Agent HEADER 的 `ACTIVE_EXTENSIONS`
+- 示例: `audit-ext-jalor` 的接口权限与审计日志规则只定义在其 Skill/Reference 中，不写入通用覆盖矩阵
 
 ### Config-driven 维度 (D2/D7/D8/D10)
 - ✅已覆盖 = 核心配置项均已检查 + 版本/算法已对比基线

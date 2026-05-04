@@ -30,6 +30,9 @@
 - **Agent 定义**: `.opencode/agents/` — 包含 code-audit (主调度器) 及 9 个专业 Subagent
 - **Skill 知识库**: `.opencode/skills/` — 可复用的方法论模块 (anti-hallucination, anti-confirmation-bias, attack-chain, taint-analysis 等)
 - **参考文档**: `references/` — 核心方法论、语言模块、框架模块、安全领域、Checklist、WooYun案例库
+- **Harness 协议**: `.opencode/skills/audit-harness/` — 语言/技术栈/场景画像、目标上下文协商、扩展 Skill 激活
+- **扩展 Skill**: `.opencode/skills/audit-ext-*` / `.opencode/skills/audit-vuln-*` — 内部框架、特殊场景、新漏洞类型与利用方式
+- **目标项目上下文**: `{target_project}/audit-context.md` — 放在被审计项目根目录，由 AI 自主探索后读取并合并
 
 ---
 
@@ -128,6 +131,31 @@
 | Unauthorized Access | `references/wooyun/unauthorized-access.md` |
 | Logic Flaws | `references/wooyun/logic-flaws.md` |
 | Info Disclosure | `references/wooyun/info-disclosure.md` |
+
+---
+
+## Harness Extension Protocol (场景扩展协议)
+
+Harness 的目标是保持核心审计框架稳定，同时允许开发者用固定的 Skill 添加方式兼容特殊场景。
+
+### 固定入口
+
+| 类型 | 路径 | 用途 |
+|------|------|------|
+| Harness Skill | `.opencode/skills/audit-harness/SKILL.md` | 生成 `[HARNESS_PROFILE]`、`[ACTIVE_EXTENSIONS]`、`[CONTEXT_GAPS]` |
+| 内部框架/场景扩展 | `.opencode/skills/audit-ext-{name}/SKILL.md` | 例如内部 Spring 二开框架、私有网关、租户模型 |
+| 新漏洞/利用方式扩展 | `.opencode/skills/audit-vuln-{name}/SKILL.md` | 例如新反序列化链、新注入方式、新协议攻击 |
+| 扩展参考文档 | `references/extensions/{name}.md` | 放较长的内部知识、检测细节、验证规则 |
+| 目标项目上下文 | `{target_project}/audit-context.md` | 放目标项目的语言、技术栈、部署暴露面、业务场景、内部框架说明 |
+
+### 执行原则
+
+1. AI 先自主探索目标项目，再读取目标项目 `audit-context.md`
+2. 人工上下文只补充或纠正探索结果，不替代代码证据
+3. 内部框架或场景规则写入扩展 Skill，不写入通用 checklist
+4. 被激活的扩展 Skill 必须进入 Agent Contract，并由对应 Subagent 执行
+5. 扩展规则未执行时，相关 D 维度最多只能标记为浅覆盖
+6. 不要在目标项目 `.opencode/skills` 下搜索扩展；目标项目只提供 `audit-context.md`，扩展 Skill 从审计框架自身加载
 
 ---
 
