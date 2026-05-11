@@ -41,7 +41,7 @@ permission:
 
 - □ 所有轮次所有 Agent 均已完成或标注超时
 - □ 所有轮次发现已合并去重
-- □ 覆盖度检查通过
+- □ 覆盖度检查通过；sink-driven 维度必须读取 `audit_get_sink_coverage` 或 Agent `SINK_LEDGER/LEDGER_FILE`
 - □ 认证链审计已完成
 - □ ★ 每个 finding 已完成报告前真实性复核
 - □ ★ 严重度校准已完成
@@ -209,10 +209,11 @@ Source/Sink 代码片段 5-10 行，中间节点 3-6 行。
 ```
 1. 执行摘要（1页）── 审计范围、关键发现统计、最高风险总结
 2. 漏洞统计表 ── 按等级汇总: Critical×N, High×N, Medium×N, Low×N
-3. 真实性复核摘要 ── 逐项说明保留、降级、删除依据
-4. 漏洞详情（按等级降序）── Critical → High → Medium → Low
-5. 攻击链分析 ── 多漏洞串联的端到端攻击路径
-6. 正面发现 ── 项目做得好的安全实践
+3. Sink 覆盖与 Known Gaps ── D1/D4/D5/D6 的 candidates/triaged/unchecked/high_path，列出 OPEN/TIMEOUT
+4. 真实性复核摘要 ── 逐项说明保留、降级、删除依据
+5. 漏洞详情（按等级降序）── Critical → High → Medium → Low
+6. 攻击链分析 ── 多漏洞串联的端到端攻击路径
+7. 正面发现 ── 项目做得好的安全实践
 ```
 
 **每个漏洞条目必须包含**: 项目标签+编号与标题(如【项目名称】【H-01】远程命令执行) | 属性表(严重程度/CVSS/CWE/置信度/复核结论) | 漏洞描述 | 漏洞根因 | 攻击者利用方法 | 数据流总览 | 漏洞数据流分析/关键代码分析 | PoC | 简短修复提示

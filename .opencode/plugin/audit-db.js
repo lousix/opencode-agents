@@ -71,6 +71,34 @@ function initSchema(db) {
     notes        TEXT
   )`);
 
+  db.run(`CREATE TABLE IF NOT EXISTS sink_candidates (
+    id            INTEGER PRIMARY KEY,
+    session_id    INTEGER REFERENCES audit_sessions(id),
+    finding_id    INTEGER REFERENCES findings(id),
+    dimension     TEXT,
+    agent_source  TEXT,
+    round_number  INTEGER DEFAULT 1,
+    sink_type     TEXT,
+    pattern       TEXT,
+    file_path     TEXT,
+    line_number   INTEGER,
+    code_snippet  TEXT,
+    status        TEXT,
+    reason        TEXT,
+    evidence      TEXT,
+    risk          TEXT,
+    path_status   TEXT,
+    traced_depth  INTEGER,
+    ledger_file   TEXT,
+    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  db.run(`CREATE INDEX IF NOT EXISTS idx_sink_candidates_session_status
+          ON sink_candidates(session_id, status)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_sink_candidates_session_dimension
+          ON sink_candidates(session_id, dimension)`);
+
   db.run(`CREATE TABLE IF NOT EXISTS finding_verifications (
     id                INTEGER PRIMARY KEY,
     finding_id        INTEGER REFERENCES findings(id),
@@ -105,6 +133,32 @@ function initSchema(db) {
 }
 
 // ─── Tool definitions ────────────────────────────────────────────────────────
+
+const SINK_CANDIDATE_STATUSES = new Set([
+  "TRACED_VULN",
+  "TRACED_SAFE",
+  "TRACED_SANITIZED",
+  "TRACED_NO_SOURCE",
+  "FALSE_POSITIVE",
+  "EXCLUDED_TEST",
+  "EXCLUDED_VENDOR",
+  "UNREACHABLE",
+  "OPEN",
+  "TIMEOUT",
+]);
+
+const SINK_CANDIDATE_OPEN_STATUSES = new Set(["OPEN", "TIMEOUT"]);
+
+function normalizeSinkCandidateStatus(value) {
+  const status = String(value ?? "OPEN").trim().toUpperCase();
+  return SINK_CANDIDATE_STATUSES.has(status) ? status : "OPEN";
+}
+
+function normalizePathStatus(value) {
+  const status = String(value ?? "UNKNOWN").trim().toUpperCase();
+  if (["COMPLETE", "PARTIAL", "NOT_REQUIRED", "UNKNOWN"].includes(status)) return status;
+  return "UNKNOWN";
+}
 
 const auditInitSession = tool({
   description: "Initialize an audit session. Call once at the start of each audit. Returns session_id used by all other audit tools.",
@@ -213,6 +267,170 @@ const auditSaveSinkChain = tool({
     }
     db.close();
     return JSON.stringify({ saved: steps.length });
+  },
+});
+
+const auditSaveSinkCandidates = tool({
+  description: "Save sink-driven candidate ledger entries. Call from D1/D4/D5/D6 agents after enumerating Sink hits, including safe/false-positive/excluded/open entries.",
+  args: {
+    session_id:    tool.schema.number().describe("Session ID from audit_init_session"),
+    dimension:     tool.schema.string().optional().describe("Default dimension for entries, e.g. D1, D4, D5, D6"),
+    agent_source:  tool.schema.string().optional().describe("Agent name, e.g. audit-d1-injection"),
+    round_number:  tool.schema.number().optional().describe("Audit round number"),
+    ledger_file:   tool.schema.string().optional().describe("Optional full JSONL ledger artifact path"),
+    candidates:    tool.schema.string().describe(
+      'JSON array. Each item: {"dimension":"D1","sink_type":"SQL_DYNAMIC","pattern":"...","file_path":"...","line_number":42,"code_snippet":"...","status":"TRACED_SAFE|OPEN|...","reason":"...","evidence":"...","risk":"High","path_status":"COMPLETE|PARTIAL|NOT_REQUIRED|UNKNOWN","traced_depth":3,"finding_id":1}'
+    ),
+  },
+  async execute(args) {
+    const db = getDb();
+    let candidates;
+    try {
+      candidates = JSON.parse(args.candidates);
+    } catch {
+      db.close();
+      return JSON.stringify({ error: "candidates must be a valid JSON array" });
+    }
+    if (!Array.isArray(candidates)) {
+      db.close();
+      return JSON.stringify({ error: "candidates must be a JSON array" });
+    }
+
+    const session = db.query("SELECT id FROM audit_sessions WHERE id=?").get(args.session_id);
+    if (!session) {
+      db.close();
+      return JSON.stringify({ error: `Session ${args.session_id} not found` });
+    }
+
+    const insert = db.prepare(
+      `INSERT INTO sink_candidates
+         (session_id, finding_id, dimension, agent_source, round_number,
+          sink_type, pattern, file_path, line_number, code_snippet,
+          status, reason, evidence, risk, path_status, traced_depth, ledger_file)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+
+    const byStatus = {};
+    const ids = [];
+    for (const raw of candidates) {
+      const status = normalizeSinkCandidateStatus(raw?.status);
+      byStatus[status] = (byStatus[status] ?? 0) + 1;
+      const result = insert.run([
+        args.session_id,
+        raw?.finding_id ?? null,
+        raw?.dimension ?? args.dimension ?? null,
+        raw?.agent_source ?? args.agent_source ?? null,
+        raw?.round_number ?? args.round_number ?? 1,
+        raw?.sink_type ?? null,
+        raw?.pattern ?? null,
+        raw?.file_path ?? null,
+        raw?.line_number ?? null,
+        raw?.code_snippet ?? null,
+        status,
+        raw?.reason ?? null,
+        raw?.evidence ?? null,
+        raw?.risk ?? null,
+        normalizePathStatus(raw?.path_status),
+        raw?.traced_depth ?? null,
+        raw?.ledger_file ?? args.ledger_file ?? null,
+      ]);
+      ids.push(result.lastInsertRowid);
+    }
+
+    const unchecked = (byStatus.OPEN ?? 0) + (byStatus.TIMEOUT ?? 0);
+    db.close();
+    return JSON.stringify({
+      saved: candidates.length,
+      unchecked,
+      by_status: byStatus,
+      candidate_ids: ids.slice(0, 100),
+      candidate_ids_truncated: ids.length > 100,
+    });
+  },
+});
+
+const auditGetUncheckedSinks = tool({
+  description: "Fetch OPEN/TIMEOUT sink candidates for an audit session. Use during R2 planning to clear sink-driven coverage gaps.",
+  args: {
+    session_id:   tool.schema.number().describe("Session ID from audit_init_session"),
+    dimension:    tool.schema.string().optional().describe("Optional dimension filter, e.g. D1"),
+    agent_source: tool.schema.string().optional().describe("Optional agent source filter"),
+    limit:        tool.schema.number().optional().describe("Maximum entries to return, default 100"),
+  },
+  async execute(args) {
+    const db = getDb();
+    const where = ["session_id=?", "status IN ('OPEN','TIMEOUT')"];
+    const params = [args.session_id];
+    if (args.dimension) {
+      where.push("dimension=?");
+      params.push(args.dimension);
+    }
+    if (args.agent_source) {
+      where.push("agent_source=?");
+      params.push(args.agent_source);
+    }
+    const limit = Math.max(1, Math.min(args.limit ?? 100, 500));
+    const rows = db.query(
+      `SELECT * FROM sink_candidates
+       WHERE ${where.join(" AND ")}
+       ORDER BY dimension, file_path, line_number
+       LIMIT ?`
+    ).all(...params, limit);
+    const total = db.query(
+      `SELECT COUNT(*) AS count FROM sink_candidates WHERE ${where.join(" AND ")}`
+    ).get(...params)?.count ?? 0;
+    db.close();
+    return JSON.stringify({
+      session_id: args.session_id,
+      count: total,
+      returned: rows.length,
+      truncated: total > rows.length,
+      unchecked_sinks: rows,
+    });
+  },
+});
+
+const auditGetSinkCoverage = tool({
+  description: "Summarize sink-driven candidate coverage for a session, grouped by dimension.",
+  args: {
+    session_id: tool.schema.number().describe("Session ID from audit_init_session"),
+  },
+  async execute(args) {
+    const db = getDb();
+    const rows = db.query(
+      `SELECT
+         dimension,
+         COUNT(*) AS candidates,
+         SUM(CASE WHEN status NOT IN ('OPEN','TIMEOUT') THEN 1 ELSE 0 END) AS triaged,
+         SUM(CASE WHEN status IN ('OPEN','TIMEOUT') THEN 1 ELSE 0 END) AS unchecked,
+         SUM(CASE WHEN status IN ('EXCLUDED_TEST','EXCLUDED_VENDOR') THEN 1 ELSE 0 END) AS excluded,
+         SUM(CASE WHEN status='TRACED_VULN' THEN 1 ELSE 0 END) AS findings,
+         SUM(CASE WHEN UPPER(COALESCE(risk,'')) IN ('CRITICAL','HIGH','C','H') THEN 1 ELSE 0 END) AS high_risk,
+         SUM(CASE WHEN UPPER(COALESCE(risk,'')) IN ('CRITICAL','HIGH','C','H')
+                   AND path_status='COMPLETE' THEN 1 ELSE 0 END) AS high_path_complete
+       FROM sink_candidates
+       WHERE session_id=?
+       GROUP BY dimension
+       ORDER BY dimension`
+    ).all(args.session_id);
+
+    const summary = rows.map((row) => ({
+      ...row,
+      sink_triage:
+        row.candidates > 0 ? `${row.triaged}/${row.candidates}` : "0/0",
+      sink_triage_percent:
+        row.candidates > 0 ? Number(((row.triaged / row.candidates) * 100).toFixed(2)) : 100,
+      high_path:
+        row.high_risk > 0 ? `${row.high_path_complete}/${row.high_risk}` : "0/0",
+      high_path_percent:
+        row.high_risk > 0 ? Number(((row.high_path_complete / row.high_risk) * 100).toFixed(2)) : 100,
+      covered:
+        row.candidates > 0 &&
+        row.unchecked === 0 &&
+        (row.high_risk === 0 || row.high_path_complete === row.high_risk),
+    }));
+    db.close();
+    return JSON.stringify({ session_id: args.session_id, dimensions: summary });
   },
 });
 
@@ -1089,6 +1307,9 @@ export default async (_ctx) => ({
     audit_init_session:    auditInitSession,
     audit_save_finding:    auditSaveFinding,
     audit_save_sink_chain: auditSaveSinkChain,
+    audit_save_sink_candidates: auditSaveSinkCandidates,
+    audit_get_unchecked_sinks: auditGetUncheckedSinks,
+    audit_get_sink_coverage: auditGetSinkCoverage,
     audit_save_verification: auditSaveVerification,
     audit_update_finding_after_verification: auditUpdateFindingAfterVerification,
     audit_get_findings_for_verification: auditGetFindingsForVerification,

@@ -29,9 +29,10 @@
 覆盖判定因维度类型而异，不同审计策略有不同标准：
 
 ### Sink-driven 维度 (D1, D4, D5, D6)
-- **已覆盖** = 核心 Sink 类别均被搜索 + 有数据流追踪 + Sink 扇出率 ≥ 30%
-- **浅覆盖** = 搜索过但 Sink 类别有遗漏 / 仅 Grep 未追踪 / 扇出率 < 30%
+- **已覆盖** = 核心 Sink 类别均被搜索 + `SINK_LEDGER` 完整 + `sink_triage=100%` + `unchecked=0` + Critical/High 候选 `high_path=100%`
+- **浅覆盖** = 搜索过但 Sink 类别有遗漏 / 仅 Grep 未追踪 / 缺少 `SINK_LEDGER` / `sink_triage<100%` / `unchecked>0` / Critical/High Sink 链不完整
 - **未覆盖** = 该维度未被任何 Agent 搜索
+- 大型项目可将完整账本写入 `audit-artifacts/sink-ledger-*.jsonl`，但覆盖判定仍以账本中 OPEN/TIMEOUT 是否清空为准
 
 ### Control-driven 维度 (D3, D9)
 - **已覆盖** = 端点审计率 ≥ 50%(deep) / ≥ 30%(standard) + 至少 3 种资源类型执行了 CRUD 权限一致性对比

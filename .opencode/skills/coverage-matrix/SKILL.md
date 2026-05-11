@@ -67,8 +67,8 @@ description: "Two-layer checklist architecture with D1-D10 security coverage mat
 ## 覆盖标准（按审计策略分轨）
 
 ### Sink-driven 维度 (D1/D4/D5/D6)
-- ✅已覆盖 = 核心 Sink 类别均被搜索 + 有数据流追踪 + Sink 扇出率 ≥ 30%
-- ⚠️浅覆盖 = 搜索过但 Sink 类别有遗漏 / 仅 Grep 未追踪 / 扇出率 < 30%
+- ✅已覆盖 = 核心 Sink 类别均被搜索 + `SINK_LEDGER` 完整 + `sink_triage=100%` + `unchecked=0` + Critical/High 候选 `high_path=100%`
+- ⚠️浅覆盖 = 搜索过但 Sink 类别有遗漏 / 仅 Grep 未追踪 / 缺少 `SINK_LEDGER` / `sink_triage<100%` / `unchecked>0` / Critical/High Sink 链不完整
 - ❌未覆盖 = 未被任何 Agent 搜索
 
 ### Control-driven 维度 (D3/D9)
@@ -88,7 +88,7 @@ description: "Two-layer checklist architecture with D1-D10 security coverage mat
 - ❌未覆盖 = 未检查
 
 ### T3 Sink 覆盖验证
-对每个标记 ✅ 的维度，检查核心 Sink 类别是否都被搜索过。如有遗漏 → 降级 ⚠️。
+对每个标记 ✅ 的 sink-driven 维度，检查核心 Sink 类别是否都被搜索过，并检查 `SINK_LEDGER`/`LEDGER_FILE` 中是否仍有 OPEN/TIMEOUT。如类别遗漏或未清空 → 降级 ⚠️。
 
 ### 强制覆盖
 D1(注入) + D2(认证) + D3(授权) 必须覆盖，否则不可进入 REPORT。

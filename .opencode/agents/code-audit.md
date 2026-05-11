@@ -280,12 +280,13 @@ Agent 5: 配置+加密+供应链 (D7+D8+D10) [config-driven] — @audit-d7d8d10-
 
 ### Agent Count
 R1: f(攻击面, 代码量): 小型(<10K) 2-3, 中型(10K-100K) 3-5, 大型(>100K) 5-9
-R2: determined by ROUND_N_EVALUATION gap count
+R2: determined by ROUND_N_EVALUATION gap count + sink-driven `UNCHECKED_SINKS` count (prefer `audit_get_sink_coverage` / `audit_get_unchecked_sinks`)
 
 ### Agent Contract Loading
 Before dispatching each subagent, load `skill({ name: "agent-contract" })` and inject the contract template into the subagent prompt with project-specific values.
 
 Agent Contract 必须携带:
+- `[项目路径]` = `audit_init_session` 使用的 `project_path` 绝对路径，必须注入到每个 subagent
 - `[HARNESS_PROFILE]` from `@audit-recon`
 - `[ACTIVE_EXTENSIONS]` from `@audit-recon`
 - `[CONTEXT_GAPS]` from `@audit-recon`
@@ -302,7 +303,7 @@ Agent Contract 必须携带:
 
   2. 截断恢复流程:
      a. 检查 HEADER 是否存活
-        ├── YES → 提取 COVERAGE/UNCHECKED/STATS
+        ├── YES → 提取 COVERAGE/UNCHECKED/STATS；sink-driven 还必须提取 SINK_LEDGER/LEDGER_FILE
         └── NO  → resume Agent 请求仅输出 HEADER
 
      b. findings_truncated = true:
@@ -313,6 +314,7 @@ Agent Contract 必须携带:
   3. Agent 部分失败处理:
      - 输出 < 5 条 + 无 HEADER → 维度标记 ❌
      - 有 HEADER 但发现 < 3 条 → 维度标记 ⚠️
+     - sink-driven Agent 有 HEADER 但无 SINK_LEDGER/LEDGER_FILE → 维度最高标记 ⚠️，并派 R2 补账本/清空 OPEN
 
   4. 预防: ≥2 个 Agent 截断 → 后续追加 "输出 ≤ 3000 字"
 ```
@@ -337,7 +339,7 @@ Agent Contract 必须携带:
 | 轮次 | Agent 类型 | 数量 | max_turns | 工具调用上限 | 工具调用下限 ｜
 |------|-----------|------|-----------|-------------|-------------|
 | R1 | 广度扫描 | 3-5 | 25 | 400 | 40 |
-| R2 | 增量补漏 | 1-3 | 20 | 400 | 40 |
+| R2 | 增量补漏 | 1-3 | 50 | 400 | 40 |
 | R3 | 攻击链验证 | 0-1 | 15 | 400 | 40 |
 
 ## 9. Work Principles (审计工作原则)

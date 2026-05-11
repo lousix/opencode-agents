@@ -51,8 +51,8 @@ D1-D10 覆盖矩阵 → 标记: ✅已覆盖 / ⚠️浅覆盖 / ❌未覆盖
 **覆盖判定按审计策略分轨（不同维度用不同标准）**:
 
 **【Sink-driven 维度: D1/D4/D5/D6】**
-- ✅已覆盖 = 核心 Sink 类别均被搜索 + 有数据流追踪 + Sink 扇出率 ≥ 30% + **★ Sink 链完整（至少记录了 Source→Sink 的关键节点代码）**
-- ⚠️浅覆盖 = 搜索过但: Sink 类别有遗漏 / 仅 Grep 未追踪 / 只搜核心模块 / 扇出率 < 30% / **Sink 链不完整（缺少中间节点代码记录）**
+- ✅已覆盖 = 核心 Sink 类别均被搜索 + `SINK_LEDGER` 完整 + `sink_triage=100%` + `unchecked=0` + Critical/High 候选 `high_path=100%`
+- ⚠️浅覆盖 = 搜索过但: Sink 类别有遗漏 / 仅 Grep 未追踪 / 只搜核心模块 / 缺少 `SINK_LEDGER` / `sink_triage<100%` / `unchecked>0` / Critical/High Sink 链不完整
 - ❌未覆盖 = 该维度未被任何 Agent 搜索
 
 **【Control-driven 维度: D3/D9】**
@@ -66,11 +66,13 @@ D1-D10 覆盖矩阵 → 标记: ✅已覆盖 / ⚠️浅覆盖 / ❌未覆盖
 - ⚠️浅覆盖 = 仅检查了部分配置 / 未深入验证
 - ❌未覆盖 = 该维度未被任何 Agent 检查
 
-### Sink 扇出检查（防止"广搜浅挖"导致覆盖率虚高）
+### Sink Ledger 检查（防止"广搜浅挖"导致覆盖率虚高）
 
-- 扇出率 = 已追踪数据流的文件数 / Grep命中的文件数
-- 某维度 Grep 命中 ≥10 文件但仅追踪 ≤2 个 → 扇出率 ≤ 20% → 降级为 ⚠️
-- 数据来源: Agent HEADER 中 STATS.files_read 和 STATS.grep_patterns
+- `sink_triage = 已分类 in-scope Sink hits / 全部 in-scope Sink hits`
+- `unchecked = OPEN + TIMEOUT`
+- `high_path = 已完成 Source→Transform/Sanitizer→Sink 链路的 Critical/High 候选 / 全部 Critical/High 候选`
+- 数据来源: 优先使用 `audit_get_sink_coverage` / `audit_get_unchecked_sinks`；无数据库结果时使用 Agent HEADER 中 COVERAGE + `SINK_LEDGER` 块；大账本用 `LEDGER_FILE` 路径和 sha256 作为复核入口
+- sink-driven Agent 无 `SINK_LEDGER`/`LEDGER_FILE` → 该维度最高只能标记为 ⚠️
 
 ### ★ Sink 链完整性检查（增强）
 
@@ -80,10 +82,10 @@ D1-D10 覆盖矩阵 → 标记: ✅已覆盖 / ⚠️浅覆盖 / ❌未覆盖
 
 ### 收敛保证（防止无穷轮次）
 
-- UNCHECKED_CANDIDATES 仅在 R1 产生，R2 消化但不再生
-- R2 Agent 禁止输出新的 UNCHECKED_CANDIDATES
-- R2 后所有维度视为"已尽力覆盖" → 直接进 REPORT 或 R3
-- 候选链深度 = 1（R1 产生 → R2 消化 → 终止）
+- `UNCHECKED_SINKS` 仅在 R1 从 `SINK_LEDGER` 的 OPEN/TIMEOUT 产生，R2 消化但不再生新候选类别
+- R2 Agent 禁止输出新的 Sink 类别候选；若无法清空，必须保留 TIMEOUT 并写入 UNFINISHED
+- R2 后若仍有 `UNCHECKED_SINKS`，最终报告必须列为 Known Gaps，不能宣称 sink-driven 100% 覆盖
+- 候选链深度 = 1（R1 产生账本 → R2 清空 OPEN/TIMEOUT → 终止或显式 Known Gap）
 
 ---
 
@@ -94,23 +96,25 @@ COVERED:    D1(✅ N个发现), D2(✅ N个发现), ...
 GAPS:       D3(❌ 未覆盖), D8(⚠️ 仅Grep未深入), ...
 CLEAN:      [已搜索确认不存在的攻击面,如JNDI/XXE]
 HOTSPOTS:   [R1发现但未深入的高风险点, file:line:断点描述]
+SINK_LEDGER:[sink-driven候选账本摘要, candidates/in_scope/triaged/unchecked/high_path, LEDGER_FILE?]
+UNCHECKED_SINKS: [file:line|sink_type|OPEN/TIMEOUT|next_step]
 FILES_READ: [已读文件+关键结论, R2不再重读]
 GREP_DONE:  [已执行的Grep patterns, R2不再重复]
 ```
 
-### 3. 缺口数 → R2 Agent 数量
+### 3. 缺口数 + 未清空 Sink → R2 Agent 数量
 
-- ❌未覆盖 0-1 个 → R2: 1 Agent (15 turns)
-- ❌未覆盖 2-3 个 → R2: 2 Agent (2×20 turns)
-- ❌未覆盖 4+ 个 → R2: 3 Agent (3×20 turns)
-- ⚠️浅覆盖: 每2个合并为1个R2 Agent
+- ❌/⚠️覆盖缺口 0-1 个，且 `UNCHECKED_SINKS ≤ 20` → R2: 1 Agent (50 turns)
+- ❌/⚠️覆盖缺口 2-3 个，或 `UNCHECKED_SINKS 21-60` → R2: 2 Agent (2×50 turns)
+- ❌/⚠️覆盖缺口 4+ 个，或 `UNCHECKED_SINKS > 60` → R2: 3 Agent (3×50 turns)
+- 若仅 sink-driven 存在 OPEN/TIMEOUT，R2 目标应明确为“清空 UNCHECKED_SINKS”，不是重新全量扫描
 
 ---
 
 ## 三问法则（必须逐条回答）
 
 Q1: 有没有计划搜索但没搜到的区域？ → YES = NEXT_ROUND
-Q2: 发现的入口点是否都追踪到了 Sink？ → NO = NEXT_ROUND
+Q2: sink-driven 的 `SINK_LEDGER` 是否全部分类关闭，且高危候选都有完整链？ → NO = NEXT_ROUND
 Q3: 高风险发现间是否可能存在跨模块关联？ → YES = NEXT_ROUND
 
 ---
@@ -125,9 +129,9 @@ Q3: 高风险发现间是否可能存在跨模块关联？ → YES = NEXT_ROUND
 - 唯一例外 — 必须 5 条全部满足:
   □ 覆盖 10/10（无 ❌ 且无 ⚠️）
   □ 三问法则全部 NO
-  □ 所有 Agent 的 UNCHECKED_CANDIDATES 为空
+  □ 所有 Agent 的 UNCHECKED / UNCHECKED_SINKS 为空
   □ 所有 Agent 的 UNFINISHED 为空
-  □ 所有维度 Sink 扇出率 ≥ 30%
+  □ 所有 sink-driven 维度 `sink_triage=100%` 且 Critical/High `high_path=100%`
 
 ### deep 模式（2-3 轮）
 - R2 始终执行（即使 R1 覆盖 10/10）

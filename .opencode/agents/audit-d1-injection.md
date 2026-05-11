@@ -127,19 +127,22 @@ permission:
 必须加载 skill: anti-hallucination, sink-chain-methodology。
 必须使用 Grep/Glob/Read 工具。禁止 Bash 中 grep/find/cat。
 发现 Sink 后必须反向追踪至少 5 层，每一跳 Read 实际代码。
-输出格式: 发现表格 + Sink 链详情。
+输出格式: SINK_LEDGER + 发现表格 + Sink 链详情。
 ```
 
 ---
 
-## 同维度多入口（有界枚举）
+## 同维度多入口 + SINK_LEDGER（有界枚举，全量 triage）
 
 a. **Sink 类别枚举**: 每个维度发现 ≥1 个入口后，一次性枚举该维度剩余 Sink 类别（从 LLM T3 框架知识推导）。枚举结果固定，后续不再扩展。
 b. **类别上界**: 每维度最多 20 个 Sink 类别。超过则按危险度排序取 Top 20。
-c. **实例采样**: 每个 Sink 类别最多深度追踪 3 个实例，其余合并报告（影响范围 + 数量）。
-d. **禁止再生**: UNCHECKED_CANDIDATES 只在当前 Agent 枚举一次，R2 Agent 审计候选时不得产生新的 UNCHECKED_CANDIDATES。
-e. **格式**: UNCHECKED_CANDIDATES: [{sink_type}: {grep_pattern}, ...] (最多 8 项)
-f. 同 pattern 多文件 → 报告 1 个发现 + 受影响文件列表
+c. **全量候选账本**: 每个 in-scope Sink hit 必须写入 `SINK_LEDGER`，格式为 `file:line|sink_type|status|reason|finding_id?`。
+d. **状态集合**: `TRACED_VULN` / `TRACED_SAFE` / `TRACED_SANITIZED` / `TRACED_NO_SOURCE` / `FALSE_POSITIVE` / `EXCLUDED_TEST` / `EXCLUDED_VENDOR` / `UNREACHABLE` / `OPEN` / `TIMEOUT`。
+e. **深度追踪分层**: Critical/High/可疑候选必须追 Source→Transform/Sanitizer→Sink；明确安全、无 Source、测试/vendor/generated、误报候选可分类关闭，但必须给出代码证据或排除理由。
+f. **大账本落盘**: `SINK_LEDGER` 超过 40 项时写入 `audit-artifacts/sink-ledger-audit-d1-injection-r{round}.jsonl`，输出 `LEDGER_FILE` 路径、sha256、items 数。
+g. **禁止抽样冒充覆盖**: 可以合并展示同类发现，但不能用“每类追踪 3 个实例”声明覆盖完成；未完成的 hit 必须进入 `UNCHECKED_SINKS`。
+h. **禁止再生**: `UNCHECKED_SINKS` 只在 R1 从账本产生；R2 Agent 只能消化前轮 OPEN/TIMEOUT，不得产生新的候选类别。
+i. 同 pattern 多文件 → 报告 1 个发现 + 受影响文件列表，但 `SINK_LEDGER` 仍需保留每个文件/行的状态。
 ---
 
 ## 防幻觉规则（强制执行）
@@ -170,7 +173,11 @@ f. 同 pattern 多文件 → 报告 1 个发现 + 受影响文件列表
 
 ```
 调用顺序:
-1. audit_save_finding(session_id, title, severity, confidence, vuln_type,
+0. 枚举 Sink 后批量调用 audit_save_sink_candidates(session_id, dimension="D1",
+                      agent_source="audit-d1-injection", round_number, ledger_file, candidates)
+   candidates 为 SINK_LEDGER JSON 数组，包含安全/误报/排除/OPEN/TIMEOUT 全部候选。
+
+1. 对 `TRACED_VULN` 候选调用 audit_save_finding(session_id, title, severity, confidence, vuln_type,
                       file_path, line_number, description, vuln_code,
                       attack_vector, poc, fix_suggestion,
                       agent_source="audit-d1-injection", round_number, cwe)
@@ -183,4 +190,5 @@ f. 同 pattern 多文件 → 报告 1 个发现 + 受影响文件列表
 
 - `session_id` 由调度器 (code-audit) 在启动时通过 `audit_init_session` 创建并传入
 - 置信度低（需验证）的发现也必须写入，便于后续验证
+- 候选账本写入失败时必须保留 `LEDGER_FILE`，并在 UNFINISHED 中说明
 - 写入失败不阻断审计流程，记录错误继续执行
