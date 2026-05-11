@@ -27,7 +27,7 @@ description: "Agent contract templates for R1 and R2+ rounds, including output f
 [轮次目标]   Round N 的目标函数 + 方法关键词
 [前轮输入]   Round N≥2 时的跨轮传递结构
 [增量约束]   R2+ 禁止重读 FILES_READ 文件、重复 GREP_DONE 模式
-[SINK_LEDGER] sink-driven 维度候选账本，记录每个 in-scope Sink hit 的状态和证据
+[CANDIDATE_LEDGER] 全局候选账本，记录每个 in-scope Sink/Control/Config candidate 的状态和证据
 [输出格式]   结构化摘要（见下方模板）
 [截断防御]   HEADER 开头 + AGENT_OUTPUT_END 结尾
 ```
@@ -36,7 +36,7 @@ description: "Agent contract templates for R1 and R2+ rounds, including output f
 1. `[项目路径]` 必须是绝对路径，且由主调度器明确注入；不得留空，不得只传项目名。
 2. 所有 `[搜索路径]` 都必须是 `[项目路径]` 下的子路径，或能明确解析到 `[项目路径]` 下；禁止在未知 cwd 下做相对搜索。
 3. `Read/Grep/Glob` 命中的文件若不在 `[项目路径]` 下，默认视为越界结果，不纳入审计证据。
-4. `audit-artifacts/`、`audit-reports/`、`LEDGER_FILE` 等派生路径统一相对 `[项目路径]` 解析。
+4. `audit-reports/` 等最终输出路径统一相对 `[项目路径]` 解析；中间候选账本不得写入文件。
 5. 若 Agent 未拿到 `[项目路径]`，第一优先级不是继续搜索，而是立即在 HEADER/UNFINISHED 中报告 `project_path_missing`。
 
 ---
@@ -57,9 +57,15 @@ description: "Agent contract templates for R1 and R2+ rounds, including output f
 
 ---
 
-## Sink Ledger 状态机（sink-driven 强制）
+## Candidate Ledger 状态机（全局强制）
 
-适用于 D1/D4/D5/D6。覆盖率不再以“读过多少文件”作为主指标，而以每个 in-scope Sink hit 是否被分类关闭为准。
+适用于所有审计策略。覆盖率不再以“读过多少文件”作为主指标，而以每个 in-scope candidate 是否被分类关闭为准。
+
+| candidate_kind | 适用维度 | 候选来源 |
+|----------------|----------|----------|
+| `SINK` | D1/D4/D5/D6 | 危险 Sink 命中、Source→Sink 链路候选 |
+| `CONTROL` | D2/D3/D9 | 认证、授权、业务控制缺失或不一致候选 |
+| `CONFIG` | D7/D8/D10 | 配置、加密、供应链风险候选 |
 
 | 状态 | 含义 | 是否计入已分类 |
 |------|------|---------------|
@@ -72,18 +78,19 @@ description: "Agent contract templates for R1 and R2+ rounds, including output f
 | `EXCLUDED_VENDOR` | 第三方/vendor/generated 代码，已说明排除依据 | 是 |
 | `UNREACHABLE` | 死代码/未注册入口/不可达路径，已说明证据 | 是 |
 | `OPEN` | 尚未完成 triage，必须进入 R2 | 否 |
-| `TIMEOUT` | 因预算耗尽未完成，必须进入 UNFINISHED | 否 |
+| `TIMEOUT` | 因预算耗尽未完成，必须进入 UNFINISHED / Known Gaps | 否 |
 
-**sink-driven 100% 覆盖条件**:
-- 核心 Sink 类别均已搜索，且 `SINK_LEDGER` 覆盖全部 in-scope hit
-- `sink_triage = 已分类 in-scope Sink hits / 全部 in-scope Sink hits = 100%`
+**candidate 100% 覆盖条件**:
+- 核心候选类别均已枚举，且 `CANDIDATE_LEDGER` 覆盖全部 in-scope candidate
+- `candidate_triage = 已分类 in-scope candidates / 全部 in-scope candidates = 100%`
 - `unchecked = OPEN + TIMEOUT = 0`
-- Critical/High 候选的 `high_path = 已完成 Source→Transform/Sanitizer→Sink 链路 / 全部高危候选 = 100%`
+- Critical/High 候选的 `high_path = 已完成证据链 / 全部高危候选 = 100%`
 
 **落库规则**:
-- 若 `audit_save_sink_candidates` 可用，sink-driven Agent 必须将 `SINK_LEDGER` 批量写入数据库。
-- R2 调度前优先调用 `audit_get_unchecked_sinks` / `audit_get_sink_coverage` 获取 OPEN/TIMEOUT 和覆盖摘要。
-- 落库失败不阻断审计，但必须输出 `LEDGER_FILE` 并在 UNFINISHED 中说明。
+- 若 `audit_save_candidates` 可用，所有 Agent 必须将 `CANDIDATE_LEDGER` 批量写入数据库。
+- D1/D4/D5/D6 仍可兼容旧 `audit_save_sink_candidates`，但新流程优先使用 `audit_save_candidates(candidate_kind="SINK")`。
+- R2 调度前优先调用 `audit_get_unchecked_candidates` / `audit_get_candidate_coverage` 获取 OPEN/TIMEOUT 和覆盖摘要。
+- 禁止把中间候选账本写入 `audit-artifacts/*.jsonl` 或其他文件；落库失败不阻断审计，但必须在 HEADER/UNFINISHED 中说明 `candidate_db_write_failed` 并输出压缩摘要。
 
 ---
 
@@ -96,11 +103,11 @@ description: "Agent contract templates for R1 and R2+ rounds, including output f
 
 === HEADER START ===
 PROJECT_ROOT: {project_path}
-COVERAGE: D1=✅(findings=3,sink_triage=37/37,unchecked=0,high_path=3/3), D2=⚠️(...), D3=❌, ...
-  sink-driven: sink_triage=已分类in-scope Sink hits/全部in-scope Sink hits; unchecked=OPEN+TIMEOUT; high_path=完整链路高危候选/全部高危候选
-  control-driven(D3/D9): epr=已验证端点数/矩阵总端点数, crud_types=N
+COVERAGE: D1=✅(findings=3,candidate_triage=37/37,unchecked=0,high_path=3/3), D2=⚠️(...), D3=❌, ...
+  candidate: candidate_triage=已分类in-scope candidates/全部in-scope candidates; unchecked=OPEN+TIMEOUT; high_path=完整证据链高危候选/全部高危候选
+  control-driven(D3/D9): epr=已验证端点数/矩阵总端点数, crud_types=N, control_triage=已分类control candidates/全部control candidates
 ACTIVE_EXTENSIONS: {skill=done|partial|skipped(reason)}
-UNCHECKED: D1:[file:line|sink_type|OPEN|reason] | ...
+UNCHECKED: D1:[file:line|candidate_kind|rule_id|OPEN|reason] | ...
 UNFINISHED: {描述}|{原因}, ...
 STATS: tools={N}/400 | files_read={N} | grep_patterns={N} | endpoints_audited={N}/{total} | time=~{N}min
 === HEADER END ===
@@ -111,12 +118,12 @@ GREP_DONE: {pattern1} | {pattern2} | ...
 HOTSPOTS: {file:line:断点描述} | ...
 === TRANSFER BLOCK END ===
 
-=== SINK_LEDGER START ===
-SUMMARY: D1 candidates={N}, in_scope={N}, triaged={N}, unchecked={N}, excluded={N}, high_path={N}/{N}
-LEDGER_FILE: {audit-artifacts/sink-ledger-{agent}-r{round}.jsonl | sha256=... | items=N | required_if_items_gt_40}
-ITEMS: {file:line|sink_type|status|reason|finding_id?} | ...  # ≤40项；超过则只放 OPEN/TIMEOUT + 代表性已关闭项
-UNCHECKED_SINKS: {file:line|sink_type|OPEN|next_step} | ...
-=== SINK_LEDGER END ===
+=== CANDIDATE_LEDGER START ===
+SUMMARY: {kind}:{dimension} candidates={N}, in_scope={N}, triaged={N}, unchecked={N}, excluded={N}, high_path={N}/{N}
+ITEMS: {file:line|candidate_kind|rule_id|status|reason|finding_id?} | ...  # ≤40项；超过则只放 OPEN/TIMEOUT + 代表性已关闭项
+UNCHECKED_CANDIDATES: {file:line|candidate_kind|rule_id|OPEN|next_step} | ...
+DB_WRITE: {ok|failed(reason)}
+=== CANDIDATE_LEDGER END ===
 
 ### 发现列表（表格格式，按严重度排序）
 
@@ -139,7 +146,7 @@ UNCHECKED_SINKS: {file:line|sink_type|OPEN|next_step} | ...
 ## 输出预算规则
 
 - HEADER: ≤ 400 字 + TRANSFER BLOCK: ≤ 400 字（总 800 字）
-- SINK_LEDGER: ≤ 1200 字；完整账本 >40 项时写入 `{project_path}/audit-artifacts/sink-ledger-{agent}-r{round}.jsonl`，输出 `LEDGER_FILE` 路径和 sha256
+- CANDIDATE_LEDGER: ≤ 1200 字；完整账本必须优先写入数据库，禁止写入中间 JSONL 文件；对话只输出 OPEN/TIMEOUT 和代表性已关闭项
 - 发现表格: 每条 1 行 ≤ 150 字，最多 20 行
 - 发现详情: 仅 Critical + 高置信 High，每条 ≤ 10 行，最多 100 条
 - **总输出目标: ≤ 5000 字**
@@ -153,7 +160,7 @@ UNCHECKED_SINKS: {file:line|sink_type|OPEN|next_step} | ...
 ---Agent Contract---
 0. 项目路径（绝对路径，唯一可信锚点）: {project_path}。
    0.1 先确认所有搜索路径都位于 {project_path} 之下；若缺失/不一致，立即停止扩散搜索，并在 HEADER/UNFINISHED 标记 `project_path_missing` 或 `path_out_of_scope`。
-   0.2 所有派生路径（audit-artifacts/audit-reports/LEDGER_FILE）都相对 {project_path} 解析，不依赖当前 cwd。
+   0.2 最终报告路径（audit-reports）相对 {project_path} 解析，不依赖当前 cwd；中间候选账本不得写入文件。
 1. 搜索路径（搜索前先使用Grep工具确认文件完整路径，再使用Read工具读取）: {paths}。排除: {excludes}。
 1.1 Harness Profile: {HARNESS_PROFILE}。
 1.2 Active Extensions: {ACTIVE_EXTENSIONS}。若存在适用于当前 Agent/维度的扩展 Skill，必须加载并执行其 Agent Contract Additions / Finding Rules / Verification Rules。
@@ -165,14 +172,14 @@ UNCHECKED_SINKS: {file:line|sink_type|OPEN|next_step} | ...
 5. 搜索策略: Grep 定位行号 → Read offset/limit 读上下文。禁止整文件读取。
 6. 输出: 按 Agent 输出模板返回。禁止大段代码（>5行）。
 7. 节约: 同类漏洞 ≥5 合并，只详细描述其中一个漏洞的细节。同 pattern 多文件列清单。
-8. 同维度多入口 + SINK_LEDGER:
-   a. Sink 类别枚举: ≥1 入口后一次性枚举剩余类别。
+8. 同维度多入口 + CANDIDATE_LEDGER:
+   a. 候选类别枚举: ≥1 入口后一次性枚举剩余类别。
    b. 类别上界: 每维度最多 20 个。
-   c. 全量候选 triage: 每个 in-scope Sink hit 必须写入 SINK_LEDGER 并给出状态。
-   d. 深度追踪分层: Critical/High/可疑候选必须追 Source→Transform/Sanitizer→Sink；明确安全/测试/vendor/误报可分类关闭但必须给理由。
-   e. 完整账本 >40 项时写入 audit-artifacts JSONL；对话输出摘要、LEDGER_FILE、全部 OPEN/TIMEOUT 和代表性已关闭项。
-   f. 禁止用“抽样实例”声明覆盖完成；预算不足时标记 OPEN/TIMEOUT，并写入 UNCHECKED_SINKS。
-   g. R1 可产生 UNCHECKED_SINKS；R2+ 只能消化前轮 UNCHECKED_SINKS，不得为逃避覆盖而再生候选。
+   c. 全量候选 triage: 每个 in-scope candidate 必须写入 CANDIDATE_LEDGER 并给出状态。
+   d. 深度追踪分层: Critical/High/可疑候选必须补齐对应证据链；明确安全/测试/vendor/误报可分类关闭但必须给理由。
+   e. 完整账本必须通过 `audit_save_candidates` 入库；禁止写 audit-artifacts JSONL；对话输出摘要、全部 OPEN/TIMEOUT 和代表性已关闭项。
+   f. 禁止用“抽样实例”声明覆盖完成；预算不足时标记 OPEN/TIMEOUT，并写入 UNCHECKED_CANDIDATES。
+   g. R1 可产生 UNCHECKED_CANDIDATES；R2+ 只能消化前轮 UNCHECKED_CANDIDATES，不得为逃避覆盖而再生候选。
 9. 数据转换管道追踪:
    a. Sink → Grep 调用位置 → 追踪中间构造/转换层
    b. 重复直到 Source 或 5 层上限，每层 Read 验证
@@ -202,12 +209,12 @@ UNCHECKED_SINKS: {file:line|sink_type|OPEN|next_step} | ...
    GAPS: {dimensions} ← 审计目标
    CLEAN: {patterns} ← 直接跳过
    HOTSPOTS: {file:line:断点描述} ← 优先深入
-   SINK_LEDGER: {前轮候选账本摘要}
-   UNCHECKED_SINKS: {file:line|sink_type|OPEN/TIMEOUT|next_step} ← R2 优先清空
+   CANDIDATE_LEDGER: {前轮候选账本摘要}
+   UNCHECKED_CANDIDATES: {file:line|candidate_kind|rule_id|OPEN/TIMEOUT|next_step} ← R2 优先清空
    FILES_READ: {file:conclusion} ← 不再重读
    GREP_DONE: {pattern} ← 不再重复
-9. 增量规则: 只审计 GAPS + UNCHECKED_SINKS。CLEAN 不搜索。FILES_READ 不重读，除非该文件包含待清空 Sink 且必须补上下文。
-10. 收敛规则: R2+ 禁止输出新的 Sink 类别候选；必须把收到的 UNCHECKED_SINKS 分类为最终状态，无法完成则保留 TIMEOUT 并写入 UNFINISHED。
+9. 增量规则: 只审计 GAPS + UNCHECKED_CANDIDATES。CLEAN 不搜索。FILES_READ 不重读，除非该文件包含待清空 candidate 且必须补上下文。
+10. 收敛规则: R2+ 禁止输出新的候选类别；必须把收到的 UNCHECKED_CANDIDATES 分类为最终状态，无法完成则保留 TIMEOUT 并写入 UNFINISHED。
 11. ★ 截断防御: 同 R1 #10。
 ---End Contract---
 ```

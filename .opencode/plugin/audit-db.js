@@ -99,6 +99,37 @@ function initSchema(db) {
   db.run(`CREATE INDEX IF NOT EXISTS idx_sink_candidates_session_dimension
           ON sink_candidates(session_id, dimension)`);
 
+  db.run(`CREATE TABLE IF NOT EXISTS audit_candidates (
+    id             INTEGER PRIMARY KEY,
+    session_id     INTEGER REFERENCES audit_sessions(id),
+    finding_id     INTEGER REFERENCES findings(id),
+    dimension      TEXT,
+    agent_source   TEXT,
+    round_number   INTEGER DEFAULT 1,
+    candidate_kind TEXT,
+    rule_id        TEXT,
+    candidate_type TEXT,
+    evidence_type  TEXT,
+    file_path      TEXT,
+    line_number    INTEGER,
+    code_snippet   TEXT,
+    status         TEXT,
+    reason         TEXT,
+    evidence       TEXT,
+    risk           TEXT,
+    path_status    TEXT,
+    traced_depth   INTEGER,
+    created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  db.run(`CREATE INDEX IF NOT EXISTS idx_audit_candidates_session_status
+          ON audit_candidates(session_id, status)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_audit_candidates_session_kind
+          ON audit_candidates(session_id, candidate_kind)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_audit_candidates_session_dimension
+          ON audit_candidates(session_id, dimension)`);
+
   db.run(`CREATE TABLE IF NOT EXISTS finding_verifications (
     id                INTEGER PRIMARY KEY,
     finding_id        INTEGER REFERENCES findings(id),
@@ -271,13 +302,13 @@ const auditSaveSinkChain = tool({
 });
 
 const auditSaveSinkCandidates = tool({
-  description: "Save sink-driven candidate ledger entries. Call from D1/D4/D5/D6 agents after enumerating Sink hits, including safe/false-positive/excluded/open entries.",
+  description: "Legacy compatibility: save sink-driven candidate ledger entries. Prefer audit_save_candidates(candidate_kind='SINK'); do not write intermediate JSONL ledger files.",
   args: {
     session_id:    tool.schema.number().describe("Session ID from audit_init_session"),
     dimension:     tool.schema.string().optional().describe("Default dimension for entries, e.g. D1, D4, D5, D6"),
     agent_source:  tool.schema.string().optional().describe("Agent name, e.g. audit-d1-injection"),
     round_number:  tool.schema.number().optional().describe("Audit round number"),
-    ledger_file:   tool.schema.string().optional().describe("Optional full JSONL ledger artifact path"),
+    ledger_file:   tool.schema.string().optional().describe("Deprecated compatibility field; do not create or pass intermediate JSONL ledger files in new workflows."),
     candidates:    tool.schema.string().describe(
       'JSON array. Each item: {"dimension":"D1","sink_type":"SQL_DYNAMIC","pattern":"...","file_path":"...","line_number":42,"code_snippet":"...","status":"TRACED_SAFE|OPEN|...","reason":"...","evidence":"...","risk":"High","path_status":"COMPLETE|PARTIAL|NOT_REQUIRED|UNKNOWN","traced_depth":3,"finding_id":1}'
     ),
@@ -419,6 +450,189 @@ const auditGetSinkCoverage = tool({
       sink_triage:
         row.candidates > 0 ? `${row.triaged}/${row.candidates}` : "0/0",
       sink_triage_percent:
+        row.candidates > 0 ? Number(((row.triaged / row.candidates) * 100).toFixed(2)) : 100,
+      high_path:
+        row.high_risk > 0 ? `${row.high_path_complete}/${row.high_risk}` : "0/0",
+      high_path_percent:
+        row.high_risk > 0 ? Number(((row.high_path_complete / row.high_risk) * 100).toFixed(2)) : 100,
+      covered:
+        row.candidates > 0 &&
+        row.unchecked === 0 &&
+        (row.high_risk === 0 || row.high_path_complete === row.high_risk),
+    }));
+    db.close();
+    return JSON.stringify({ session_id: args.session_id, dimensions: summary });
+  },
+});
+
+const auditSaveCandidates = tool({
+  description: "Save generic audit candidate ledger entries for sink-driven, control-driven, and config-driven audits. Use before promoting confirmed candidates to findings.",
+  args: {
+    session_id:     tool.schema.number().describe("Session ID from audit_init_session"),
+    candidate_kind: tool.schema.string().optional().describe("Default kind: SINK | CONTROL | CONFIG"),
+    dimension:      tool.schema.string().optional().describe("Default dimension for entries, e.g. D1, D3, D8"),
+    agent_source:   tool.schema.string().optional().describe("Agent name, e.g. audit-d2d3d9-control"),
+    round_number:   tool.schema.number().optional().describe("Audit round number"),
+    candidates:     tool.schema.string().describe(
+      'JSON array. Each item: {"candidate_kind":"CONTROL","dimension":"D3","rule_id":"MISSING_AUTHZ_CONTROL","candidate_type":"CONTROL_MISSING","evidence_type":"ANNOTATION_ABSENT","file_path":"...","line_number":42,"code_snippet":"...","status":"TRACED_VULN|TRACED_SAFE|OPEN|...","reason":"...","evidence":"...","risk":"High","path_status":"COMPLETE|PARTIAL|NOT_REQUIRED|UNKNOWN","traced_depth":3,"finding_id":1}'
+    ),
+  },
+  async execute(args) {
+    const db = getDb();
+    let candidates;
+    try {
+      candidates = JSON.parse(args.candidates);
+    } catch {
+      db.close();
+      return JSON.stringify({ error: "candidates must be a valid JSON array" });
+    }
+    if (!Array.isArray(candidates)) {
+      db.close();
+      return JSON.stringify({ error: "candidates must be a JSON array" });
+    }
+
+    const session = db.query("SELECT id FROM audit_sessions WHERE id=?").get(args.session_id);
+    if (!session) {
+      db.close();
+      return JSON.stringify({ error: `Session ${args.session_id} not found` });
+    }
+
+    const insert = db.prepare(
+      `INSERT INTO audit_candidates
+         (session_id, finding_id, dimension, agent_source, round_number,
+          candidate_kind, rule_id, candidate_type, evidence_type,
+          file_path, line_number, code_snippet, status, reason, evidence,
+          risk, path_status, traced_depth)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+
+    const byStatus = {};
+    const byKind = {};
+    const ids = [];
+    for (const raw of candidates) {
+      const status = normalizeSinkCandidateStatus(raw?.status);
+      const kind = String(raw?.candidate_kind ?? args.candidate_kind ?? "UNKNOWN").trim().toUpperCase();
+      byStatus[status] = (byStatus[status] ?? 0) + 1;
+      byKind[kind] = (byKind[kind] ?? 0) + 1;
+      const result = insert.run([
+        args.session_id,
+        raw?.finding_id ?? null,
+        raw?.dimension ?? args.dimension ?? null,
+        raw?.agent_source ?? args.agent_source ?? null,
+        raw?.round_number ?? args.round_number ?? 1,
+        kind,
+        raw?.rule_id ?? null,
+        raw?.candidate_type ?? null,
+        raw?.evidence_type ?? null,
+        raw?.file_path ?? null,
+        raw?.line_number ?? null,
+        raw?.code_snippet ?? null,
+        status,
+        raw?.reason ?? null,
+        raw?.evidence ?? null,
+        raw?.risk ?? null,
+        normalizePathStatus(raw?.path_status),
+        raw?.traced_depth ?? null,
+      ]);
+      ids.push(result.lastInsertRowid);
+    }
+
+    const unchecked = (byStatus.OPEN ?? 0) + (byStatus.TIMEOUT ?? 0);
+    db.close();
+    return JSON.stringify({
+      saved: candidates.length,
+      unchecked,
+      by_status: byStatus,
+      by_kind: byKind,
+      candidate_ids: ids.slice(0, 100),
+      candidate_ids_truncated: ids.length > 100,
+    });
+  },
+});
+
+const auditGetUncheckedCandidates = tool({
+  description: "Fetch OPEN/TIMEOUT generic audit candidates for an audit session. Use during R2 planning to clear candidate coverage gaps.",
+  args: {
+    session_id:      tool.schema.number().describe("Session ID from audit_init_session"),
+    candidate_kind:  tool.schema.string().optional().describe("Optional kind filter: SINK | CONTROL | CONFIG"),
+    dimension:       tool.schema.string().optional().describe("Optional dimension filter, e.g. D3"),
+    agent_source:    tool.schema.string().optional().describe("Optional agent source filter"),
+    limit:           tool.schema.number().optional().describe("Maximum entries to return, default 100"),
+  },
+  async execute(args) {
+    const db = getDb();
+    const where = ["session_id=?", "status IN ('OPEN','TIMEOUT')"];
+    const params = [args.session_id];
+    if (args.candidate_kind) {
+      where.push("candidate_kind=?");
+      params.push(String(args.candidate_kind).trim().toUpperCase());
+    }
+    if (args.dimension) {
+      where.push("dimension=?");
+      params.push(args.dimension);
+    }
+    if (args.agent_source) {
+      where.push("agent_source=?");
+      params.push(args.agent_source);
+    }
+    const limit = Math.max(1, Math.min(args.limit ?? 100, 500));
+    const rows = db.query(
+      `SELECT * FROM audit_candidates
+       WHERE ${where.join(" AND ")}
+       ORDER BY candidate_kind, dimension, file_path, line_number
+       LIMIT ?`
+    ).all(...params, limit);
+    const total = db.query(
+      `SELECT COUNT(*) AS count FROM audit_candidates WHERE ${where.join(" AND ")}`
+    ).get(...params)?.count ?? 0;
+    db.close();
+    return JSON.stringify({
+      session_id: args.session_id,
+      count: total,
+      returned: rows.length,
+      truncated: total > rows.length,
+      unchecked_candidates: rows,
+    });
+  },
+});
+
+const auditGetCandidateCoverage = tool({
+  description: "Summarize generic audit candidate coverage for a session, grouped by kind and dimension.",
+  args: {
+    session_id:     tool.schema.number().describe("Session ID from audit_init_session"),
+    candidate_kind: tool.schema.string().optional().describe("Optional kind filter: SINK | CONTROL | CONFIG"),
+  },
+  async execute(args) {
+    const db = getDb();
+    const where = ["session_id=?"];
+    const params = [args.session_id];
+    if (args.candidate_kind) {
+      where.push("candidate_kind=?");
+      params.push(String(args.candidate_kind).trim().toUpperCase());
+    }
+    const rows = db.query(
+      `SELECT
+         candidate_kind,
+         dimension,
+         COUNT(*) AS candidates,
+         SUM(CASE WHEN status NOT IN ('OPEN','TIMEOUT') THEN 1 ELSE 0 END) AS triaged,
+         SUM(CASE WHEN status IN ('OPEN','TIMEOUT') THEN 1 ELSE 0 END) AS unchecked,
+         SUM(CASE WHEN status IN ('EXCLUDED_TEST','EXCLUDED_VENDOR') THEN 1 ELSE 0 END) AS excluded,
+         SUM(CASE WHEN status='TRACED_VULN' THEN 1 ELSE 0 END) AS findings,
+         SUM(CASE WHEN UPPER(COALESCE(risk,'')) IN ('CRITICAL','HIGH','C','H') THEN 1 ELSE 0 END) AS high_risk,
+         SUM(CASE WHEN UPPER(COALESCE(risk,'')) IN ('CRITICAL','HIGH','C','H')
+                   AND path_status IN ('COMPLETE','NOT_REQUIRED') THEN 1 ELSE 0 END) AS high_path_complete
+       FROM audit_candidates
+       WHERE ${where.join(" AND ")}
+       GROUP BY candidate_kind, dimension
+       ORDER BY candidate_kind, dimension`
+    ).all(...params);
+
+    const summary = rows.map((row) => ({
+      ...row,
+      candidate_triage:
+        row.candidates > 0 ? `${row.triaged}/${row.candidates}` : "0/0",
+      candidate_triage_percent:
         row.candidates > 0 ? Number(((row.triaged / row.candidates) * 100).toFixed(2)) : 100,
       high_path:
         row.high_risk > 0 ? `${row.high_path_complete}/${row.high_risk}` : "0/0",
@@ -934,6 +1148,95 @@ function buildVerificationSummaryHtml(findings, sinkMap, verificationMap = {}) {
   </table>`;
 }
 
+function buildCandidateCoverageMd(coverageRows = [], uncheckedRows = []) {
+  if (!coverageRows.length && !uncheckedRows.length) return "";
+  let md = `## Candidate 覆盖与 Known Gaps\n\n`;
+  if (coverageRows.length) {
+    md += `| 类型 | 维度 | 候选 | 已分类 | 未完成 | 漏洞 | 高危证据链 | 覆盖 |\n`;
+    md += `|------|------|------|--------|--------|------|------------|------|\n`;
+    for (const row of coverageRows) {
+      const highPath = row.high_risk > 0 ? `${row.high_path_complete}/${row.high_risk}` : "0/0";
+      const covered = row.candidates > 0 && row.unchecked === 0 &&
+        (row.high_risk === 0 || row.high_path_complete === row.high_risk);
+      md += `| ${escapeMdCell(row.candidate_kind)} | ${escapeMdCell(row.dimension)} | ${row.candidates} | ${row.triaged} | ${row.unchecked} | ${row.findings} | ${highPath} | ${covered ? "YES" : "NO"} |\n`;
+    }
+    md += `\n`;
+  }
+  if (uncheckedRows.length) {
+    md += `### 未完成候选\n\n`;
+    md += `| 类型 | 维度 | 规则 | 位置 | 状态 | 原因 |\n`;
+    md += `|------|------|------|------|------|------|\n`;
+    for (const row of uncheckedRows) {
+      const loc = row.file_path ? `${row.file_path}${row.line_number ? `:${row.line_number}` : ""}` : "-";
+      md += `| ${escapeMdCell(row.candidate_kind)} | ${escapeMdCell(row.dimension)} | ${escapeMdCell(row.rule_id ?? row.candidate_type)} | \`${escapeMdCell(loc)}\` | ${escapeMdCell(row.status)} | ${escapeMdCell(row.reason)} |\n`;
+    }
+    md += `\n`;
+  }
+  return md;
+}
+
+function buildCandidateCoverageHtml(coverageRows = [], uncheckedRows = []) {
+  if (!coverageRows.length && !uncheckedRows.length) return "";
+  const coverageTable = coverageRows.length ? `
+    <table style="border-collapse:collapse;width:100%;font-size:0.9em;margin:16px 0;background:#fff">
+      <thead><tr style="background:#f1f3f5">
+        <th style="text-align:left;padding:8px;border:1px solid #ddd">类型</th>
+        <th style="text-align:left;padding:8px;border:1px solid #ddd">维度</th>
+        <th style="text-align:left;padding:8px;border:1px solid #ddd">候选</th>
+        <th style="text-align:left;padding:8px;border:1px solid #ddd">已分类</th>
+        <th style="text-align:left;padding:8px;border:1px solid #ddd">未完成</th>
+        <th style="text-align:left;padding:8px;border:1px solid #ddd">漏洞</th>
+        <th style="text-align:left;padding:8px;border:1px solid #ddd">高危证据链</th>
+        <th style="text-align:left;padding:8px;border:1px solid #ddd">覆盖</th>
+      </tr></thead>
+      <tbody>
+        ${coverageRows.map(row => {
+          const highPath = row.high_risk > 0 ? `${row.high_path_complete}/${row.high_risk}` : "0/0";
+          const covered = row.candidates > 0 && row.unchecked === 0 &&
+            (row.high_risk === 0 || row.high_path_complete === row.high_risk);
+          return `<tr>
+            <td style="padding:8px;border:1px solid #ddd">${escapeHtml(row.candidate_kind ?? "-")}</td>
+            <td style="padding:8px;border:1px solid #ddd">${escapeHtml(row.dimension ?? "-")}</td>
+            <td style="padding:8px;border:1px solid #ddd">${row.candidates}</td>
+            <td style="padding:8px;border:1px solid #ddd">${row.triaged}</td>
+            <td style="padding:8px;border:1px solid #ddd">${row.unchecked}</td>
+            <td style="padding:8px;border:1px solid #ddd">${row.findings}</td>
+            <td style="padding:8px;border:1px solid #ddd">${escapeHtml(highPath)}</td>
+            <td style="padding:8px;border:1px solid #ddd">${covered ? "YES" : "NO"}</td>
+          </tr>`;
+        }).join("\n")}
+      </tbody>
+    </table>` : "";
+
+  const uncheckedTable = uncheckedRows.length ? `
+    <h3>未完成候选</h3>
+    <table style="border-collapse:collapse;width:100%;font-size:0.9em;margin:16px 0;background:#fff">
+      <thead><tr style="background:#fff8e8">
+        <th style="text-align:left;padding:8px;border:1px solid #ddd">类型</th>
+        <th style="text-align:left;padding:8px;border:1px solid #ddd">维度</th>
+        <th style="text-align:left;padding:8px;border:1px solid #ddd">规则</th>
+        <th style="text-align:left;padding:8px;border:1px solid #ddd">位置</th>
+        <th style="text-align:left;padding:8px;border:1px solid #ddd">状态</th>
+        <th style="text-align:left;padding:8px;border:1px solid #ddd">原因</th>
+      </tr></thead>
+      <tbody>
+        ${uncheckedRows.map(row => {
+          const loc = row.file_path ? `${row.file_path}${row.line_number ? `:${row.line_number}` : ""}` : "-";
+          return `<tr>
+            <td style="padding:8px;border:1px solid #ddd">${escapeHtml(row.candidate_kind ?? "-")}</td>
+            <td style="padding:8px;border:1px solid #ddd">${escapeHtml(row.dimension ?? "-")}</td>
+            <td style="padding:8px;border:1px solid #ddd">${escapeHtml(row.rule_id ?? row.candidate_type ?? "-")}</td>
+            <td style="padding:8px;border:1px solid #ddd"><code>${escapeHtml(loc)}</code></td>
+            <td style="padding:8px;border:1px solid #ddd">${escapeHtml(row.status ?? "-")}</td>
+            <td style="padding:8px;border:1px solid #ddd">${escapeHtml(row.reason ?? "-")}</td>
+          </tr>`;
+        }).join("\n")}
+      </tbody>
+    </table>` : "";
+
+  return `<h2>Candidate 覆盖与 Known Gaps</h2>${coverageTable}${uncheckedTable}`;
+}
+
 function buildSinkChainMd(steps, f, verification) {
   const displaySteps = steps.length ? steps : fallbackFlowSteps(f);
   const sourceStatus = verificationSourceStatus(displaySteps, verification);
@@ -1012,7 +1315,7 @@ function buildSinkChainHtml(steps, f, verification) {
     <section style="margin:12px 0"><h4 style="margin:0 0 6px">五、漏洞数据流分析 / 关键代码分析</h4>${codeBlocks}</section>`;
 }
 
-function generateMarkdown(session, project, findings, sinkMap, attackChains, chainSteps, verificationMap = {}) {
+function generateMarkdown(session, project, findings, sinkMap, attackChains, chainSteps, verificationMap = {}, candidateCoverage = [], uncheckedCandidates = []) {
   const date = new Date().toISOString().slice(0, 10);
   const projectName = reportProjectName(project);
   assignVulnIds(findings, verificationMap);
@@ -1036,6 +1339,7 @@ function generateMarkdown(session, project, findings, sinkMap, attackChains, cha
   md += `| **合计** | **${findings.length}** |\n\n`;
 
   md += buildVerificationSummaryMd(orderedFindings, sinkMap, verificationMap);
+  md += buildCandidateCoverageMd(candidateCoverage, uncheckedCandidates);
 
   md += `## 漏洞详情\n\n`;
   for (const f of orderedFindings) {
@@ -1093,7 +1397,7 @@ function generateMarkdown(session, project, findings, sinkMap, attackChains, cha
   return md;
 }
 
-function generateHtml(session, project, findings, sinkMap, attackChains, chainSteps, verificationMap = {}) {
+function generateHtml(session, project, findings, sinkMap, attackChains, chainSteps, verificationMap = {}, candidateCoverage = [], uncheckedCandidates = []) {
   const date = new Date().toISOString().slice(0, 10);
   const projectName = reportProjectName(project);
   assignVulnIds(findings, verificationMap);
@@ -1199,6 +1503,7 @@ function generateHtml(session, project, findings, sinkMap, attackChains, chainSt
   </div>
 
   ${buildVerificationSummaryHtml(orderedFindings, sinkMap, verificationMap)}
+  ${buildCandidateCoverageHtml(candidateCoverage, uncheckedCandidates)}
 
   <h2 style="border-bottom:2px solid #333;padding-bottom:8px;margin-top:40px">漏洞详情</h2>
   ${findingsHtml}
@@ -1273,6 +1578,32 @@ const auditGenerateReport = tool({
         ).all(...attackChains.map(c => c.id))
       : [];
 
+    const candidateCoverage = db.query(
+      `SELECT
+         candidate_kind,
+         dimension,
+         COUNT(*) AS candidates,
+         SUM(CASE WHEN status NOT IN ('OPEN','TIMEOUT') THEN 1 ELSE 0 END) AS triaged,
+         SUM(CASE WHEN status IN ('OPEN','TIMEOUT') THEN 1 ELSE 0 END) AS unchecked,
+         SUM(CASE WHEN status IN ('EXCLUDED_TEST','EXCLUDED_VENDOR') THEN 1 ELSE 0 END) AS excluded,
+         SUM(CASE WHEN status='TRACED_VULN' THEN 1 ELSE 0 END) AS findings,
+         SUM(CASE WHEN UPPER(COALESCE(risk,'')) IN ('CRITICAL','HIGH','C','H') THEN 1 ELSE 0 END) AS high_risk,
+         SUM(CASE WHEN UPPER(COALESCE(risk,'')) IN ('CRITICAL','HIGH','C','H')
+                   AND path_status IN ('COMPLETE','NOT_REQUIRED') THEN 1 ELSE 0 END) AS high_path_complete
+       FROM audit_candidates
+       WHERE session_id=?
+       GROUP BY candidate_kind, dimension
+       ORDER BY candidate_kind, dimension`
+    ).all(args.session_id);
+
+    const uncheckedCandidates = db.query(
+      `SELECT candidate_kind, dimension, rule_id, candidate_type, file_path, line_number, status, reason
+       FROM audit_candidates
+       WHERE session_id=? AND status IN ('OPEN','TIMEOUT')
+       ORDER BY candidate_kind, dimension, file_path, line_number
+       LIMIT 200`
+    ).all(args.session_id);
+
     db.close();
 
     // Determine output directory
@@ -1284,8 +1615,8 @@ const auditGenerateReport = tool({
     const mdPath   = join(outDir, `${slug}.md`);
     const htmlPath = join(outDir, `${slug}.html`);
 
-    const md   = generateMarkdown(session, project, findings, sinkMap, attackChains, chainSteps, verificationMap);
-    const html = generateHtml(session, project, findings, sinkMap, attackChains, chainSteps, verificationMap);
+    const md   = generateMarkdown(session, project, findings, sinkMap, attackChains, chainSteps, verificationMap, candidateCoverage, uncheckedCandidates);
+    const html = generateHtml(session, project, findings, sinkMap, attackChains, chainSteps, verificationMap, candidateCoverage, uncheckedCandidates);
 
     writeFileSync(mdPath,   md,   "utf8");
     writeFileSync(htmlPath, html, "utf8");
@@ -1294,6 +1625,8 @@ const auditGenerateReport = tool({
       markdown: mdPath,
       html:     htmlPath,
       findings: findings.length,
+      candidate_coverage: candidateCoverage.length,
+      unchecked_candidates: uncheckedCandidates.length,
       critical: findings.filter(f => effectiveSeverity(f, verificationMap[f.id]) === "Critical").length,
       high:     findings.filter(f => effectiveSeverity(f, verificationMap[f.id]) === "High").length,
     });
@@ -1310,6 +1643,9 @@ export default async (_ctx) => ({
     audit_save_sink_candidates: auditSaveSinkCandidates,
     audit_get_unchecked_sinks: auditGetUncheckedSinks,
     audit_get_sink_coverage: auditGetSinkCoverage,
+    audit_save_candidates: auditSaveCandidates,
+    audit_get_unchecked_candidates: auditGetUncheckedCandidates,
+    audit_get_candidate_coverage: auditGetCandidateCoverage,
     audit_save_verification: auditSaveVerification,
     audit_update_finding_after_verification: auditUpdateFindingAfterVerification,
     audit_get_findings_for_verification: auditGetFindingsForVerification,

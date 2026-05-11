@@ -41,7 +41,8 @@ permission:
 
 - □ 所有轮次所有 Agent 均已完成或标注超时
 - □ 所有轮次发现已合并去重
-- □ 覆盖度检查通过；sink-driven 维度必须读取 `audit_get_sink_coverage` 或 Agent `SINK_LEDGER/LEDGER_FILE`
+- □ 覆盖度检查通过；必须读取 `audit_get_candidate_coverage` / `audit_get_unchecked_candidates` 或 Agent `CANDIDATE_LEDGER` 摘要
+- □ 最终漏洞必须对应已分类 candidate；无 `file_path:line_number` 或仍为 `OPEN/TIMEOUT` 的候选只能进入 Known Gaps，不能进入漏洞详情
 - □ 认证链审计已完成
 - □ ★ 每个 finding 已完成报告前真实性复核
 - □ ★ 严重度校准已完成
@@ -209,7 +210,7 @@ Source/Sink 代码片段 5-10 行，中间节点 3-6 行。
 ```
 1. 执行摘要（1页）── 审计范围、关键发现统计、最高风险总结
 2. 漏洞统计表 ── 按等级汇总: Critical×N, High×N, Medium×N, Low×N
-3. Sink 覆盖与 Known Gaps ── D1/D4/D5/D6 的 candidates/triaged/unchecked/high_path，列出 OPEN/TIMEOUT
+3. Candidate 覆盖与 Known Gaps ── 按 candidate_kind/dimension 汇总 candidates/triaged/unchecked/high_path，列出 OPEN/TIMEOUT
 4. 真实性复核摘要 ── 逐项说明保留、降级、删除依据
 5. 漏洞详情（按等级降序）── Critical → High → Medium → Low
 6. 攻击链分析 ── 多漏洞串联的端到端攻击路径

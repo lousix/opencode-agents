@@ -280,7 +280,7 @@ Agent 5: 配置+加密+供应链 (D7+D8+D10) [config-driven] — @audit-d7d8d10-
 
 ### Agent Count
 R1: f(攻击面, 代码量): 小型(<10K) 2-3, 中型(10K-100K) 3-5, 大型(>100K) 5-9
-R2: determined by ROUND_N_EVALUATION gap count + sink-driven `UNCHECKED_SINKS` count (prefer `audit_get_sink_coverage` / `audit_get_unchecked_sinks`)
+R2: determined by ROUND_N_EVALUATION gap count + `UNCHECKED_CANDIDATES` count (prefer `audit_get_candidate_coverage` / `audit_get_unchecked_candidates`)
 
 ### Agent Contract Loading
 Before dispatching each subagent, load `skill({ name: "agent-contract" })` and inject the contract template into the subagent prompt with project-specific values.
@@ -303,7 +303,7 @@ Agent Contract 必须携带:
 
   2. 截断恢复流程:
      a. 检查 HEADER 是否存活
-        ├── YES → 提取 COVERAGE/UNCHECKED/STATS；sink-driven 还必须提取 SINK_LEDGER/LEDGER_FILE
+        ├── YES → 提取 COVERAGE/UNCHECKED/STATS；还必须提取 CANDIDATE_LEDGER 摘要
         └── NO  → resume Agent 请求仅输出 HEADER
 
      b. findings_truncated = true:
@@ -314,7 +314,7 @@ Agent Contract 必须携带:
   3. Agent 部分失败处理:
      - 输出 < 5 条 + 无 HEADER → 维度标记 ❌
      - 有 HEADER 但发现 < 3 条 → 维度标记 ⚠️
-     - sink-driven Agent 有 HEADER 但无 SINK_LEDGER/LEDGER_FILE → 维度最高标记 ⚠️，并派 R2 补账本/清空 OPEN
+     - Agent 有 HEADER 但无对应 CANDIDATE_LEDGER → 维度最高标记 ⚠️，并派 R2 补账本/清空 OPEN
 
   4. 预防: ≥2 个 Agent 截断 → 后续追加 "输出 ≤ 3000 字"
 ```

@@ -112,3 +112,4 @@ ServiceAudit\(.*message
 
 报告前复核必须重新 Read 这些代码，不能仅依赖 Recon 统计。
 
+执行时不要为本框架建立专用中间文件或专用结果格式。逐端点检查结果应进入全局 `CANDIDATE_LEDGER(candidate_kind=CONTROL)`；覆盖百分比只用于摘要，不能替代具体 `file_path:line_number` 证据。

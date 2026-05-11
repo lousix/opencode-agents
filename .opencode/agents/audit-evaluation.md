@@ -51,28 +51,29 @@ D1-D10 覆盖矩阵 → 标记: ✅已覆盖 / ⚠️浅覆盖 / ❌未覆盖
 **覆盖判定按审计策略分轨（不同维度用不同标准）**:
 
 **【Sink-driven 维度: D1/D4/D5/D6】**
-- ✅已覆盖 = 核心 Sink 类别均被搜索 + `SINK_LEDGER` 完整 + `sink_triage=100%` + `unchecked=0` + Critical/High 候选 `high_path=100%`
-- ⚠️浅覆盖 = 搜索过但: Sink 类别有遗漏 / 仅 Grep 未追踪 / 只搜核心模块 / 缺少 `SINK_LEDGER` / `sink_triage<100%` / `unchecked>0` / Critical/High Sink 链不完整
+- ✅已覆盖 = 核心 Sink 类别均被搜索 + `CANDIDATE_LEDGER(candidate_kind=SINK)` 完整 + `candidate_triage=100%` + `unchecked=0` + Critical/High 候选 `high_path=100%`
+- ⚠️浅覆盖 = 搜索过但: Sink 类别有遗漏 / 仅 Grep 未追踪 / 只搜核心模块 / 缺少 SINK candidates / `candidate_triage<100%` / `unchecked>0` / Critical/High Sink 链不完整
 - ❌未覆盖 = 该维度未被任何 Agent 搜索
 
 **【Control-driven 维度: D3/D9】**
-- ✅已覆盖 = 端点审计率 ≥ 50%(deep) / ≥ 30%(standard) + 至少 3 种资源类型执行了 CRUD 权限一致性对比 + IDOR 检查覆盖了主要 findById/getById 调用
-- ⚠️浅覆盖 = 仅 Grep 搜索 pattern 但未系统枚举端点验证 / 仅检查了部分资源类型 / 未对比 CRUD 一致性
+- ✅已覆盖 = 端点审计率 ≥ 50%(deep) / ≥ 30%(standard) + 至少 3 种资源类型执行了 CRUD 权限一致性对比 + IDOR 检查覆盖了主要 findById/getById 调用 + `CANDIDATE_LEDGER(candidate_kind=CONTROL)` 完整 + `unchecked=0`
+- ⚠️浅覆盖 = 仅 Grep 搜索 pattern 但未系统枚举端点验证 / 仅检查了部分资源类型 / 未对比 CRUD 一致性 / 缺少 CONTROL candidates / `unchecked>0`
 - ❌未覆盖 = 未执行 Control-driven 审计
 - 端点审计率 = 已验证权限的端点数 / Phase 1 矩阵总端点数
 
 **【Config-driven 维度: D2/D7/D8/D10】**
-- ✅已覆盖 = 核心配置项均已检查 + 版本/算法已对比基线
-- ⚠️浅覆盖 = 仅检查了部分配置 / 未深入验证
+- ✅已覆盖 = 核心配置项均已检查 + 版本/算法已对比基线 + `CANDIDATE_LEDGER(candidate_kind=CONFIG)` 完整 + `unchecked=0`
+- ⚠️浅覆盖 = 仅检查了部分配置 / 未深入验证 / 缺少 CONFIG candidates / `unchecked>0`
 - ❌未覆盖 = 该维度未被任何 Agent 检查
 
-### Sink Ledger 检查（防止"广搜浅挖"导致覆盖率虚高）
+### Candidate Ledger 检查（防止"广搜浅挖"导致覆盖率虚高）
 
-- `sink_triage = 已分类 in-scope Sink hits / 全部 in-scope Sink hits`
+- `candidate_triage = 已分类 in-scope candidates / 全部 in-scope candidates`
 - `unchecked = OPEN + TIMEOUT`
-- `high_path = 已完成 Source→Transform/Sanitizer→Sink 链路的 Critical/High 候选 / 全部 Critical/High 候选`
-- 数据来源: 优先使用 `audit_get_sink_coverage` / `audit_get_unchecked_sinks`；无数据库结果时使用 Agent HEADER 中 COVERAGE + `SINK_LEDGER` 块；大账本用 `LEDGER_FILE` 路径和 sha256 作为复核入口
-- sink-driven Agent 无 `SINK_LEDGER`/`LEDGER_FILE` → 该维度最高只能标记为 ⚠️
+- `high_path = 已完成证据链的 Critical/High 候选 / 全部 Critical/High 候选`
+- 数据来源: 优先使用 `audit_get_candidate_coverage` / `audit_get_unchecked_candidates`；无数据库结果时使用 Agent HEADER 中 COVERAGE + `CANDIDATE_LEDGER` 块
+- Agent 无对应 `CANDIDATE_LEDGER` 或候选落库失败 → 该维度最高只能标记为 ⚠️
+- 禁止要求或读取中间 JSONL 账本文件；候选覆盖必须来自数据库或 Agent 输出摘要
 
 ### ★ Sink 链完整性检查（增强）
 
@@ -82,9 +83,9 @@ D1-D10 覆盖矩阵 → 标记: ✅已覆盖 / ⚠️浅覆盖 / ❌未覆盖
 
 ### 收敛保证（防止无穷轮次）
 
-- `UNCHECKED_SINKS` 仅在 R1 从 `SINK_LEDGER` 的 OPEN/TIMEOUT 产生，R2 消化但不再生新候选类别
-- R2 Agent 禁止输出新的 Sink 类别候选；若无法清空，必须保留 TIMEOUT 并写入 UNFINISHED
-- R2 后若仍有 `UNCHECKED_SINKS`，最终报告必须列为 Known Gaps，不能宣称 sink-driven 100% 覆盖
+- `UNCHECKED_CANDIDATES` 仅在 R1 从 `CANDIDATE_LEDGER` 的 OPEN/TIMEOUT 产生，R2 消化但不再生新候选类别
+- R2 Agent 禁止输出新的候选类别；若无法清空，必须保留 TIMEOUT 并写入 UNFINISHED
+- R2 后若仍有 `UNCHECKED_CANDIDATES`，最终报告必须列为 Known Gaps，不能宣称对应维度 100% 覆盖
 - 候选链深度 = 1（R1 产生账本 → R2 清空 OPEN/TIMEOUT → 终止或显式 Known Gap）
 
 ---
@@ -96,25 +97,25 @@ COVERED:    D1(✅ N个发现), D2(✅ N个发现), ...
 GAPS:       D3(❌ 未覆盖), D8(⚠️ 仅Grep未深入), ...
 CLEAN:      [已搜索确认不存在的攻击面,如JNDI/XXE]
 HOTSPOTS:   [R1发现但未深入的高风险点, file:line:断点描述]
-SINK_LEDGER:[sink-driven候选账本摘要, candidates/in_scope/triaged/unchecked/high_path, LEDGER_FILE?]
-UNCHECKED_SINKS: [file:line|sink_type|OPEN/TIMEOUT|next_step]
+CANDIDATE_LEDGER:[候选账本摘要, kind/dimension/candidates/in_scope/triaged/unchecked/high_path]
+UNCHECKED_CANDIDATES: [file:line|candidate_kind|rule_id|OPEN/TIMEOUT|next_step]
 FILES_READ: [已读文件+关键结论, R2不再重读]
 GREP_DONE:  [已执行的Grep patterns, R2不再重复]
 ```
 
-### 3. 缺口数 + 未清空 Sink → R2 Agent 数量
+### 3. 缺口数 + 未清空 Candidate → R2 Agent 数量
 
-- ❌/⚠️覆盖缺口 0-1 个，且 `UNCHECKED_SINKS ≤ 20` → R2: 1 Agent (50 turns)
-- ❌/⚠️覆盖缺口 2-3 个，或 `UNCHECKED_SINKS 21-60` → R2: 2 Agent (2×50 turns)
-- ❌/⚠️覆盖缺口 4+ 个，或 `UNCHECKED_SINKS > 60` → R2: 3 Agent (3×50 turns)
-- 若仅 sink-driven 存在 OPEN/TIMEOUT，R2 目标应明确为“清空 UNCHECKED_SINKS”，不是重新全量扫描
+- ❌/⚠️覆盖缺口 0-1 个，且 `UNCHECKED_CANDIDATES ≤ 20` → R2: 1 Agent (50 turns)
+- ❌/⚠️覆盖缺口 2-3 个，或 `UNCHECKED_CANDIDATES 21-60` → R2: 2 Agent (2×50 turns)
+- ❌/⚠️覆盖缺口 4+ 个，或 `UNCHECKED_CANDIDATES > 60` → R2: 3 Agent (3×50 turns)
+- 若仅 candidate ledger 存在 OPEN/TIMEOUT，R2 目标应明确为“清空 UNCHECKED_CANDIDATES”，不是重新全量扫描
 
 ---
 
 ## 三问法则（必须逐条回答）
 
 Q1: 有没有计划搜索但没搜到的区域？ → YES = NEXT_ROUND
-Q2: sink-driven 的 `SINK_LEDGER` 是否全部分类关闭，且高危候选都有完整链？ → NO = NEXT_ROUND
+Q2: `CANDIDATE_LEDGER` 是否全部分类关闭，且高危候选都有完整证据链？ → NO = NEXT_ROUND
 Q3: 高风险发现间是否可能存在跨模块关联？ → YES = NEXT_ROUND
 
 ---
@@ -129,9 +130,9 @@ Q3: 高风险发现间是否可能存在跨模块关联？ → YES = NEXT_ROUND
 - 唯一例外 — 必须 5 条全部满足:
   □ 覆盖 10/10（无 ❌ 且无 ⚠️）
   □ 三问法则全部 NO
-  □ 所有 Agent 的 UNCHECKED / UNCHECKED_SINKS 为空
+  □ 所有 Agent 的 UNCHECKED / UNCHECKED_CANDIDATES 为空
   □ 所有 Agent 的 UNFINISHED 为空
-  □ 所有 sink-driven 维度 `sink_triage=100%` 且 Critical/High `high_path=100%`
+  □ 所有维度 `candidate_triage=100%` 且 Critical/High `high_path=100%`
 
 ### deep 模式（2-3 轮）
 - R2 始终执行（即使 R1 覆盖 10/10）

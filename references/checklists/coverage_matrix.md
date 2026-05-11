@@ -29,20 +29,20 @@
 覆盖判定因维度类型而异，不同审计策略有不同标准：
 
 ### Sink-driven 维度 (D1, D4, D5, D6)
-- **已覆盖** = 核心 Sink 类别均被搜索 + `SINK_LEDGER` 完整 + `sink_triage=100%` + `unchecked=0` + Critical/High 候选 `high_path=100%`
-- **浅覆盖** = 搜索过但 Sink 类别有遗漏 / 仅 Grep 未追踪 / 缺少 `SINK_LEDGER` / `sink_triage<100%` / `unchecked>0` / Critical/High Sink 链不完整
+- **已覆盖** = 核心 Sink 类别均被搜索 + `CANDIDATE_LEDGER(candidate_kind=SINK)` 完整 + `candidate_triage=100%` + `unchecked=0` + Critical/High 候选 `high_path=100%`
+- **浅覆盖** = 搜索过但 Sink 类别有遗漏 / 仅 Grep 未追踪 / 缺少 SINK candidates / `candidate_triage<100%` / `unchecked>0` / Critical/High Sink 链不完整
 - **未覆盖** = 该维度未被任何 Agent 搜索
-- 大型项目可将完整账本写入 `audit-artifacts/sink-ledger-*.jsonl`，但覆盖判定仍以账本中 OPEN/TIMEOUT 是否清空为准
+- 中间候选账本不得写入文件；覆盖判定以 `audit_get_candidate_coverage` / `audit_get_unchecked_candidates` 或 Agent `CANDIDATE_LEDGER` 摘要为准
 
 ### Control-driven 维度 (D3, D9)
-- **已覆盖** = 端点审计率 ≥ 50%(deep) / ≥ 30%(standard) + 至少 3 种资源类型执行了 CRUD 权限一致性对比
-- **浅覆盖** = 仅 Grep 搜索 pattern 但未系统枚举端点验证（⚠️ 仅靠 sink-driven 搜索 D3/D9 不算覆盖）
+- **已覆盖** = 端点审计率 ≥ 50%(deep) / ≥ 30%(standard) + 至少 3 种资源类型执行了 CRUD 权限一致性对比 + CONTROL candidates 完整 + `unchecked=0`
+- **浅覆盖** = 仅 Grep 搜索 pattern 但未系统枚举端点验证（⚠️ 仅靠 sink-driven 搜索 D3/D9 不算覆盖）/ 缺少 CONTROL candidates / `unchecked>0`
 - **未覆盖** = 未执行 Control-driven 审计
 - **D3/D9 Agent 必须加载** `references/core/phase2_deep_methodology.md` Phase 2.5-2.6
 
 ### Config-driven 维度 (D2, D7, D8, D10)
-- **已覆盖** = 核心配置项均已检查 + 版本/算法已对比安全基线
-- **浅覆盖** = 仅检查了部分配置 / 未深入验证
+- **已覆盖** = 核心配置项均已检查 + 版本/算法已对比安全基线 + CONFIG candidates 完整 + `unchecked=0`
+- **浅覆盖** = 仅检查了部分配置 / 未深入验证 / 缺少 CONFIG candidates / `unchecked>0`
 - **未覆盖** = 该维度未被任何 Agent 检查
 
 ## 终止判定

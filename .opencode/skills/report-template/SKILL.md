@@ -126,12 +126,12 @@ Medium: 允许 [中置信]
 Low/Info: 允许 [需验证]
 ```
 
-## Sink 覆盖与 Known Gaps
+## Candidate 覆盖与 Known Gaps
 
-报告必须包含 D1/D4/D5/D6 的 sink-driven 覆盖摘要:
+报告必须包含所有 candidate_kind/dimension 的覆盖摘要:
 - `candidates / triaged / unchecked / high_path`
-- 若存在 OPEN/TIMEOUT，必须列出文件、行号、sink_type、未完成原因；不得宣称该维度 100% 覆盖
-- 若完整账本写入 `LEDGER_FILE`，报告应给出路径和 sha256
+- 若存在 OPEN/TIMEOUT，必须列出文件、行号、candidate_kind、rule_id、未完成原因；不得宣称该维度 100% 覆盖
+- 中间候选账本不得写入文件；报告应优先读取 `audit_get_candidate_coverage` / `audit_get_unchecked_candidates`
 
 ## 报告前复核要求
 

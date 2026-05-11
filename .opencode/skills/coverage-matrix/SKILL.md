@@ -67,28 +67,28 @@ description: "Two-layer checklist architecture with D1-D10 security coverage mat
 ## 覆盖标准（按审计策略分轨）
 
 ### Sink-driven 维度 (D1/D4/D5/D6)
-- ✅已覆盖 = 核心 Sink 类别均被搜索 + `SINK_LEDGER` 完整 + `sink_triage=100%` + `unchecked=0` + Critical/High 候选 `high_path=100%`
-- ⚠️浅覆盖 = 搜索过但 Sink 类别有遗漏 / 仅 Grep 未追踪 / 缺少 `SINK_LEDGER` / `sink_triage<100%` / `unchecked>0` / Critical/High Sink 链不完整
+- ✅已覆盖 = 核心 Sink 类别均被搜索 + `CANDIDATE_LEDGER(candidate_kind=SINK)` 完整 + `candidate_triage=100%` + `unchecked=0` + Critical/High 候选 `high_path=100%`
+- ⚠️浅覆盖 = 搜索过但 Sink 类别有遗漏 / 仅 Grep 未追踪 / 缺少 SINK candidates / `candidate_triage<100%` / `unchecked>0` / Critical/High Sink 链不完整
 - ❌未覆盖 = 未被任何 Agent 搜索
 
 ### Control-driven 维度 (D3/D9)
-- ✅已覆盖 = 端点审计率 ≥ 50%(deep)/30%(standard) + ≥3种资源类型CRUD对比 + IDOR覆盖
-- ⚠️浅覆盖 = 仅 Grep pattern 未系统枚举
+- ✅已覆盖 = 端点审计率 ≥ 50%(deep)/30%(standard) + ≥3种资源类型CRUD对比 + IDOR覆盖 + `CANDIDATE_LEDGER(candidate_kind=CONTROL)` 完整 + `unchecked=0`
+- ⚠️浅覆盖 = 仅 Grep pattern 未系统枚举 / 缺少 CONTROL candidates / `unchecked>0`
 - ❌未覆盖 = 未执行 Control-driven 审计
 
 **Harness 扩展覆盖追加**:
 - 若 `[ACTIVE_EXTENSIONS]` 中存在覆盖 D3/D9 的扩展 Skill，D3/D9 覆盖判定必须追加该扩展的 Coverage / Agent Contract requirements
 - 未执行 active extension required checks 时，即使已做一般性 CRUD/IDOR 对比，也只能标记为 ⚠️浅覆盖
 - 扩展覆盖状态必须写入 Agent HEADER 的 `ACTIVE_EXTENSIONS`
-- 示例: `audit-ext-jalor` 的接口权限与审计日志规则只定义在其 Skill/Reference 中，不写入通用覆盖矩阵
+- 扩展规则产生的候选必须进入通用 `CANDIDATE_LEDGER`，使用扩展自身的 `rule_id`，不得只输出百分比
 
 ### Config-driven 维度 (D2/D7/D8/D10)
-- ✅已覆盖 = 核心配置项均已检查 + 版本/算法已对比基线
-- ⚠️浅覆盖 = 仅检查了部分配置
+- ✅已覆盖 = 核心配置项均已检查 + 版本/算法已对比基线 + `CANDIDATE_LEDGER(candidate_kind=CONFIG)` 完整 + `unchecked=0`
+- ⚠️浅覆盖 = 仅检查了部分配置 / 缺少 CONFIG candidates / `unchecked>0`
 - ❌未覆盖 = 未检查
 
 ### T3 Sink 覆盖验证
-对每个标记 ✅ 的 sink-driven 维度，检查核心 Sink 类别是否都被搜索过，并检查 `SINK_LEDGER`/`LEDGER_FILE` 中是否仍有 OPEN/TIMEOUT。如类别遗漏或未清空 → 降级 ⚠️。
+对每个标记 ✅ 的维度，优先检查 `audit_get_candidate_coverage` / `audit_get_unchecked_candidates`。如类别遗漏、候选未入库或仍有 OPEN/TIMEOUT → 降级 ⚠️。
 
 ### 强制覆盖
 D1(注入) + D2(认证) + D3(授权) 必须覆盖，否则不可进入 REPORT。

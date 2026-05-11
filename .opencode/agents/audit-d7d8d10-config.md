@@ -115,11 +115,17 @@ permission:
 
 ## ★ 数据库写入规则（强制执行）
 
-**每发现一个漏洞，立即调用 `audit_save_finding` 写入数据库，不等报告阶段。**
+**每个 config-driven 检查项必须先进入 candidate ledger；只有 `TRACED_VULN` 才允许升级为 finding。**
 
 ```
 调用顺序:
-1. audit_save_finding(session_id, title, severity, confidence, vuln_type,
+0. 对加密、配置、供应链检查项批量调用:
+   audit_save_candidates(session_id, candidate_kind="CONFIG", dimension="D7/D8/D10",
+                         agent_source="audit-d7d8d10-config", round_number, candidates)
+   candidates 为 CANDIDATE_LEDGER JSON 数组，包含 TRACED_SAFE/FALSE_POSITIVE/OPEN/TIMEOUT/TRACED_VULN 全部候选。
+   每个 candidate 必须包含 rule_id、candidate_type、file_path、line_number、code_snippet、status、reason/evidence。
+
+1. 仅对 `TRACED_VULN` 候选调用 audit_save_finding(session_id, title, severity, confidence, vuln_type,
                       file_path, line_number, description, vuln_code,
                       attack_vector, poc, fix_suggestion,
                       agent_source="audit-d7d8d10-config", round_number, cwe)
@@ -131,5 +137,6 @@ permission:
 ```
 
 - `session_id` 由调度器 (code-audit) 在启动时通过 `audit_init_session` 创建并传入
-- 置信度低（需验证）的发现也必须写入，便于后续验证
+- 置信度低（需验证）的候选必须保留为 `OPEN` 或 `TIMEOUT`，不得直接升级为高危 finding
+- 候选账本写入失败时不得写中间文件，必须在 UNFINISHED 中说明 `candidate_db_write_failed` 并输出压缩摘要
 - 写入失败不阻断审计流程，记录错误继续执行

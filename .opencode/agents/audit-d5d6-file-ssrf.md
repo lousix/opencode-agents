@@ -116,21 +116,21 @@ permission:
 ## ★ 两层并行 — 大型项目自主 spawn sub-subagent
 
 触发条件: Grep 命中文件数 > 20 且分布在 3+ 模块，或 Sink 类别 > 5。
-切分规则: 按模块边界切分，sub-subagent 继承 D5+D6 方向和 SINK_LEDGER 约束，上限 3 个。
+切分规则: 按模块边界切分，sub-subagent 继承 D5+D6 方向和 CANDIDATE_LEDGER 约束，上限 3 个。
 
 ---
 
-## 同维度多入口 + SINK_LEDGER（有界枚举，全量 triage）
+## 同维度多入口 + CANDIDATE_LEDGER（有界枚举，全量 triage）
 
 a. **Sink 类别枚举**: 每个维度发现 ≥1 个入口后，一次性枚举该维度剩余 Sink 类别（从 LLM T3 框架知识推导）。枚举结果固定，后续不再扩展。
 b. **类别上界**: 每维度最多 20 个 Sink 类别。超过则按危险度排序取 Top 20。
-c. **全量候选账本**: 每个 in-scope Sink hit 必须写入 `SINK_LEDGER`，格式为 `file:line|sink_type|status|reason|finding_id?`。
+c. **全量候选账本**: 每个 in-scope Sink hit 必须写入 `CANDIDATE_LEDGER`，格式为 `file:line|SINK|rule_id|status|reason|finding_id?`。
 d. **状态集合**: `TRACED_VULN` / `TRACED_SAFE` / `TRACED_SANITIZED` / `TRACED_NO_SOURCE` / `FALSE_POSITIVE` / `EXCLUDED_TEST` / `EXCLUDED_VENDOR` / `UNREACHABLE` / `OPEN` / `TIMEOUT`。
 e. **深度追踪分层**: 文件读写、上传、解压、路径拼接、HTTP 客户端、URL/JDBC/邮件请求等 Critical/High/可疑候选必须追 Source→Transform/Sanitizer→Sink；明确安全、无 Source、测试/vendor/generated、误报候选可分类关闭，但必须给出代码证据或排除理由。
-f. **大账本落盘**: `SINK_LEDGER` 超过 40 项时写入 `audit-artifacts/sink-ledger-audit-d5d6-file-ssrf-r{round}.jsonl`，输出 `LEDGER_FILE` 路径、sha256、items 数。
-g. **禁止抽样冒充覆盖**: 可以合并展示同类发现，但不能用“每类追踪 3 个实例”声明覆盖完成；未完成的 hit 必须进入 `UNCHECKED_SINKS`。
-h. **禁止再生**: `UNCHECKED_SINKS` 只在 R1 从账本产生；R2 Agent 只能消化前轮 OPEN/TIMEOUT，不得产生新的候选类别。
-i. 同 pattern 多文件 → 报告 1 个发现 + 受影响文件列表，但 `SINK_LEDGER` 仍需保留每个文件/行的状态。
+f. **禁止中间落盘**: 候选账本必须优先通过 `audit_save_candidates` 入库，禁止写入 `audit-artifacts/*.jsonl`。
+g. **禁止抽样冒充覆盖**: 可以合并展示同类发现，但不能用“每类追踪 3 个实例”声明覆盖完成；未完成的 hit 必须进入 `UNCHECKED_CANDIDATES`。
+h. **禁止再生**: `UNCHECKED_CANDIDATES` 只在 R1 从账本产生；R2 Agent 只能消化前轮 OPEN/TIMEOUT，不得产生新的候选类别。
+i. 同 pattern 多文件 → 报告 1 个发现 + 受影响文件列表，但 `CANDIDATE_LEDGER` 仍需保留每个文件/行的状态。
 ---
 
 ## 防幻觉规则（强制执行）
@@ -151,9 +151,9 @@ i. 同 pattern 多文件 → 报告 1 个发现 + 受影响文件列表，但 `S
 
 ```
 调用顺序:
-0. 枚举 Sink 后批量调用 audit_save_sink_candidates(session_id, dimension="D5/D6",
-                      agent_source="audit-d5d6-file-ssrf", round_number, ledger_file, candidates)
-   candidates 为 SINK_LEDGER JSON 数组，包含安全/误报/排除/OPEN/TIMEOUT 全部候选。
+0. 枚举 Sink 后批量调用 audit_save_candidates(session_id, candidate_kind="SINK", dimension="D5/D6",
+                      agent_source="audit-d5d6-file-ssrf", round_number, candidates)
+   candidates 为 CANDIDATE_LEDGER JSON 数组，包含安全/误报/排除/OPEN/TIMEOUT 全部候选。
 
 1. 对 `TRACED_VULN` 候选调用 audit_save_finding(session_id, title, severity, confidence, vuln_type,
                       file_path, line_number, description, vuln_code,
@@ -168,5 +168,5 @@ i. 同 pattern 多文件 → 报告 1 个发现 + 受影响文件列表，但 `S
 
 - `session_id` 由调度器 (code-audit) 在启动时通过 `audit_init_session` 创建并传入
 - 置信度低（需验证）的发现也必须写入，便于后续验证
-- 候选账本写入失败时必须保留 `LEDGER_FILE`，并在 UNFINISHED 中说明
+- 候选账本写入失败时不得写中间文件，必须在 UNFINISHED 中说明 `candidate_db_write_failed` 并输出压缩摘要
 - 写入失败不阻断审计流程，记录错误继续执行

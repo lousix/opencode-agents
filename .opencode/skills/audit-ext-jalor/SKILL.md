@@ -17,6 +17,8 @@ agents: audit-recon, audit-d2d3d9-control, audit-evaluation, audit-report, audit
 priority: 90
 ```
 
+本扩展不得引入专用 Agent、专用表或专用中间文件。所有检查项必须作为通用 `CONTROL` candidate 进入 `CANDIDATE_LEDGER`，再按全局 candidate 状态机分类。
+
 ---
 
 ## Aliases
@@ -96,6 +98,27 @@ Jalor: endpoints={N}, JalorOperation={covered/total}, non_get_ServiceAudit={cove
    - `#{id}`
    - `dto.id` 形式至少要求根参数 `dto` 在方法签名中真实存在。
 
+### Candidate Ledger Additions
+
+每个被检查的映射接口必须产生通用 CONTROL candidate:
+
+```text
+candidate_kind: CONTROL
+dimension: D3 或 D9
+rule_id: 使用本扩展 Finding Rules 条件的稳定短名
+candidate_type: CONTROL_MISSING | AUDIT_MISSING | AUDIT_MESSAGE_INVALID | CONTROL_SAFE
+evidence_type: ANNOTATION_PRESENT | ANNOTATION_ABSENT | MESSAGE_PARSE | EQUIVALENT_CONTROL
+file_path: Controller 文件
+line_number: 映射注解行或问题所在注解行
+code_snippet: 映射注解 + 方法签名的实际代码片段
+status: TRACED_VULN | TRACED_SAFE | FALSE_POSITIVE | OPEN | TIMEOUT
+```
+
+- 只有复核后确认缺失/错误的 candidate 才能升级为 finding。
+- 已由类级注解、组合注解、父类、AOP、Interceptor、Filter 或网关策略提供等价控制时，必须标记为 `TRACED_SAFE` 或降级，不得直接报漏洞。
+- 仅有覆盖百分比、没有逐端点 `file_path:line_number` 的结果，不得升级为 finding。
+- 候选账本必须通过 `audit_save_candidates` 入库，禁止写中间 JSONL 文件。
+
 ---
 
 ## Finding Rules
@@ -122,3 +145,4 @@ Jalor: endpoints={N}, JalorOperation={covered/total}, non_get_ServiceAudit={cove
 5. 如声称存在等价控制，必须读取对应 Filter/AOP/Interceptor/父类实现。
 
 不得仅根据 Recon 统计或用户上下文保留 finding。
+不得根据 Jalor 覆盖百分比生成 finding；百分比只能作为 coverage 摘要，漏洞详情必须来自已分类的 CONTROL candidate。
