@@ -1,0 +1,10 @@
+.git
+.DS_Store
+.opencode/node_modules
+.opencode/audit.db
+audit-output
+node_modules
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache

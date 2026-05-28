@@ -146,6 +146,10 @@ audit_update_finding_after_verification(
 写回规则：
 
 - 找到更真实 Source 时，必须用 `sink_chain_steps` 替换旧链路。
+- `sink_chain_steps` 必须是非空 JSON 数组；每一项必须包含可落库证据字段，优先使用精确键名：
+  `{"step_type":"Source|Transform|Sanitizer|Sink","file_path":"...","line_number":42,"code_snippet":"...","notes":"..."}`
+- 禁止传 `[]`、纯空对象、只有自然语言但无位置/代码/说明的步骤；工具返回 `error` 或 `replaced_steps=0` 时必须修正参数重试，不能输出 `[VERIFY_DONE]`。
+- Critical/High/Medium 的回写链路必须至少包含一个 `Source` 和一个 `Sink`，且 Source/Sink 都有文件行号或真实代码片段。
 - 补充利用方式时，必须写入 `attack_vector`。
 - 修正 PoC 时，必须写入 `poc`。
 - 降级时，必须更新 `severity` 和 `confidence`。

@@ -353,6 +353,7 @@ Source → Transform → Sanitizer/缺失 → Sink 的流程图和表格。
    ```
    返回 `{ markdown: "...", html: "...", findings: N, critical: N, high: N }`
    若返回 `missing_verifications`，必须回到报告前真实性复核阶段，按 `missing_finding_ids` 补齐 `audit_save_verification` 和 `audit_update_finding_after_verification`，禁止生成正式报告。
+   若返回 `missing_evidence_chains`，说明 finding 虽有复核记录但 Source→Sink 链入库缺失或损坏；必须用 `audit_get_findings_for_verification(session_id, include_verified=false, finding_ids="...")` 拉取这些 `missing_finding_ids`，重新 dispatch `@audit-verification`，并用非空、含 Source 与 Sink 的 `sink_chain_steps` 写回后再生成报告。
 
 8. **在对话框展示最终 Markdown 报告** — 生成文件后必须 Read 返回的 Markdown 路径，并按原报告模板输出到对话框:
    - 若报告 ≤ 30000 字，直接输出完整 Markdown 报告正文。

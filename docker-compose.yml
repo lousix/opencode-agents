@@ -1,0 +1,46 @@
+services:
+  code-audit:
+    image: ${IMAGE_NAME:-opencode-code-audit:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NODE_VERSION: ${NODE_VERSION:-22-bookworm-slim}
+        OPENCODE_VERSION: ${OPENCODE_VERSION:-1.2.20}
+        INSTALL_SECURITY_TOOLS: ${INSTALL_SECURITY_TOOLS:-false}
+    environment:
+      AUDIT_MODE: ${AUDIT_MODE:-standard}
+      TARGET_DIR: /workspace
+      AUDIT_OUTPUT: ${AUDIT_OUTPUT:-/reports/audit-report.md}
+      REPORT_LANG: ${REPORT_LANG:-zh-CN}
+      OPENCODE_AGENT: ${OPENCODE_AGENT:-code-audit}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GOOGLE_GENERATIVE_AI_API_KEY: ${GOOGLE_GENERATIVE_AI_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    volumes:
+      - type: bind
+        source: ${TARGET_PROJECT:-.}
+        target: /workspace
+      - type: bind
+        source: ${AUDIT_REPORT_DIR:-./audit-output}
+        target: /reports
+      - opencode_config:/home/opencode/.config/opencode
+      - opencode_data:/home/opencode/.local/share/opencode
+      - opencode_state:/home/opencode/.local/state/opencode
+      - opencode_cache:/home/opencode/.cache/opencode
+      - audit_db:/home/opencode/.opencode
+    ports:
+      - "${OPENCODE_PORT:-4096}:4096"
+    stdin_open: true
+    tty: true
+    command: ["audit"]
+
+volumes:
+  opencode_config:
+  opencode_data:
+  opencode_state:
+  opencode_cache:
+  audit_db:

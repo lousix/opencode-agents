@@ -165,6 +165,7 @@ i. 同 pattern 多文件 → 报告 1 个发现 + 受影响文件列表，但 `C
 2. 若有 Sink 链，立即调用 audit_save_sink_chain(finding_id, steps)
    steps 格式: JSON 数组，每项 {"step_type":"Source|Transform|Sanitizer|Sink",
                "file_path":"...","line_number":42,"code_snippet":"...","notes":"..."}
+   必须检查返回值；若返回 `error` 或 `saved=0`，修正为上述字段重试。禁止传 `[]`、空对象或纯自然语言列表。
 ```
 
 - `session_id` 由调度器 (code-audit) 在启动时通过 `audit_init_session` 创建并传入

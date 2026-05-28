@@ -191,6 +191,204 @@ function normalizePathStatus(value) {
   return "UNKNOWN";
 }
 
+const SEVERITY_ORDER = ["Critical", "High", "Medium", "Low", "Info"];
+
+function normalizeSeverity(value) {
+  const severity = String(value ?? "").trim().toLowerCase();
+  return SEVERITY_ORDER.find((s) => s.toLowerCase() === severity) ?? "Info";
+}
+
+function firstPresent(obj, keys) {
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(obj, key) && obj[key] !== undefined && obj[key] !== null) {
+      return obj[key];
+    }
+  }
+  return undefined;
+}
+
+function stringifyStepValue(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string") return value.trim() || null;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function parseLineNumber(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const n = Number(value);
+  if (Number.isFinite(n)) return Math.trunc(n);
+  const match = String(value).match(/\d+/);
+  return match ? Number(match[0]) : null;
+}
+
+function extractLocation(value) {
+  const text = stringifyStepValue(value);
+  if (!text) return {};
+  const match = text.match(/((?:[A-Za-z]:)?[A-Za-z0-9_@./\\-]+):(\d+)/);
+  if (!match) return {};
+  return { file_path: match[1], line_number: Number(match[2]) };
+}
+
+function inferStepType(value, index = 0, total = 1) {
+  const text = String(value ?? "").trim();
+  if (/source|污点源|数据源|入口|入参|请求|参数|header|cookie|body|webhook|mq|rpc/i.test(text)) return "Source";
+  if (/sink|汇聚|危险|执行|命令|sql|ssrf|fileutil|runtime|curl|clone|delete|write|read/i.test(text)) return "Sink";
+  if (/saniti[sz]er|filter|validate|escape|check|allowlist|净化|过滤|校验|检查|白名单|黑名单|权限/i.test(text)) return "Sanitizer";
+  if (/transform|propagat|build|convert|process|concat|assign|parse|转换|传播|拼接|构造|处理|赋值|中间/i.test(text)) return "Transform";
+  if (total <= 1) return "Sink";
+  if (index === 0) return "Source";
+  if (index === total - 1) return "Sink";
+  return "Transform";
+}
+
+function normalizeStepType(type) {
+  const t = String(type ?? "").trim();
+  if (!t) return "Step";
+  if (/source|entry|input|request|param|污点源|数据源|入口|入参|请求|参数/i.test(t)) return "Source";
+  if (/sink|danger|execute|execution|callsite|汇聚|危险|执行点|落点/i.test(t)) return "Sink";
+  if (/saniti[sz]er|filter|validat|escape|check|allowlist|净化|过滤|校验|检查|白名单|黑名单|权限/i.test(t)) return "Sanitizer";
+  if (/transform|propagat|build|convert|process|concat|assign|parse|转换|传播|拼接|构造|处理|赋值|中间/i.test(t)) return "Transform";
+  return t;
+}
+
+function parseStringStep(raw, index, total) {
+  const text = stringifyStepValue(raw) ?? "";
+  const loc = extractLocation(text);
+  const parts = text.split("|").map((p) => p.trim()).filter(Boolean);
+  const codeish = parts.find((p) => /[;{}=()]|@\w+|public |private |return |new |\.exec|\.query|curl |git /i.test(p));
+  const stageText = parts[0] ?? text;
+  return {
+    step_type: inferStepType(stageText, index, total),
+    file_path: loc.file_path ?? null,
+    line_number: loc.line_number ?? null,
+    code_snippet: codeish && codeish !== stageText ? codeish : null,
+    notes: text || null,
+  };
+}
+
+function parseObjectStep(raw, index, total) {
+  const entries = Object.entries(raw).filter(([, value]) => value !== undefined && value !== null && value !== "");
+  let typeValue = firstPresent(raw, [
+    "step_type", "stepType", "type", "stage", "kind", "role", "node_type", "nodeType",
+    "phase", "阶段", "类型", "节点类型",
+  ]);
+  let singleValue;
+  if (!typeValue && entries.length === 1) {
+    typeValue = entries[0][0];
+    singleValue = entries[0][1];
+  }
+
+  const locationValue = firstPresent(raw, [
+    "location", "loc", "position", "位置", "source", "sink",
+  ]) ?? singleValue;
+  const loc = extractLocation(locationValue);
+  const fileValue = firstPresent(raw, [
+    "file_path", "filePath", "filepath", "file", "path", "文件", "路径",
+  ]);
+  const fileLoc = extractLocation(fileValue);
+  const lineValue = firstPresent(raw, [
+    "line_number", "lineNumber", "line", "lineno", "行号",
+  ]);
+  const codeValue = firstPresent(raw, [
+    "code_snippet", "codeSnippet", "snippet", "code", "evidence", "key_code",
+    "vuln_code", "代码", "证据", "关键代码",
+  ]);
+  const notesValue = firstPresent(raw, [
+    "notes", "note", "description", "reason", "judgment", "summary", "处理",
+    "说明", "判断", "备注", "安全判断",
+  ]) ?? singleValue;
+
+  const typeText = [
+    stringifyStepValue(typeValue),
+    stringifyStepValue(locationValue),
+    stringifyStepValue(notesValue),
+    stringifyStepValue(codeValue),
+  ].filter(Boolean).join(" ");
+  const normalizedType = normalizeStepType(typeValue);
+
+  return {
+    step_type: normalizedType === "Step" ? inferStepType(typeText, index, total) : normalizedType,
+    file_path: fileLoc.file_path ?? stringifyStepValue(fileValue) ?? loc.file_path ?? null,
+    line_number: parseLineNumber(lineValue) ?? loc.line_number ?? fileLoc.line_number ?? null,
+    code_snippet: stringifyStepValue(codeValue),
+    notes: stringifyStepValue(notesValue),
+  };
+}
+
+function hasStepEvidence(step) {
+  return Boolean(
+    step?.file_path ||
+    (step?.line_number !== null && step?.line_number !== undefined) ||
+    step?.code_snippet ||
+    step?.notes
+  );
+}
+
+function normalizeSinkChainSteps(rawSteps) {
+  if (!Array.isArray(rawSteps)) {
+    return { error: "steps must be a JSON array" };
+  }
+  if (!rawSteps.length) {
+    return { error: "steps must not be empty; omit sink_chain_steps to keep the existing chain" };
+  }
+
+  const normalized = rawSteps.map((raw, index) => {
+    if (typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean") {
+      return parseStringStep(raw, index, rawSteps.length);
+    }
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      return parseObjectStep(raw, index, rawSteps.length);
+    }
+    return {
+      step_type: inferStepType("", index, rawSteps.length),
+      file_path: null,
+      line_number: null,
+      code_snippet: null,
+      notes: stringifyStepValue(raw),
+    };
+  }).filter(hasStepEvidence);
+
+  if (!normalized.length) {
+    return {
+      error: "steps contained no usable evidence; each step needs file_path/location, line_number, code_snippet, or notes",
+    };
+  }
+
+  return { steps: normalized, discarded: rawSteps.length - normalized.length };
+}
+
+function reportableSinkSteps(steps = []) {
+  const evidenceSteps = steps.filter(hasStepEvidence);
+  return evidenceSteps.map((step, index) => ({
+    ...step,
+    step_type: normalizeStepType(step.step_type) === "Step"
+      ? inferStepType(`${step.notes ?? ""} ${step.code_snippet ?? ""}`, index, evidenceSteps.length)
+      : normalizeStepType(step.step_type),
+  }));
+}
+
+function chainEvidenceStatus(steps = []) {
+  const reportable = reportableSinkSteps(steps);
+  const hasSource = reportable.some((s) => normalizeStepType(s.step_type) === "Source");
+  const hasSink = reportable.some((s) => normalizeStepType(s.step_type) === "Sink");
+  return {
+    steps: reportable,
+    hasEvidence: reportable.length > 0,
+    hasSource,
+    hasSink,
+    complete: reportable.length > 0 && hasSource && hasSink,
+  };
+}
+
+function requiresReportEvidenceChain(f, verification) {
+  return ["Critical", "High", "Medium"].includes(effectiveSeverity(f, verification));
+}
+
 const auditInitSession = tool({
   description: "Initialize an audit session. Call once at the start of each audit. Returns session_id used by all other audit tools.",
   args: {
@@ -267,11 +465,11 @@ const auditSaveFinding = tool({
 });
 
 const auditSaveSinkChain = tool({
-  description: "Save sink chain nodes for a finding. Call after audit_save_finding with the finding_id. Pass steps as a JSON array.",
+  description: "Save sink chain nodes for a finding. Call after audit_save_finding with the finding_id. Pass a non-empty JSON array; empty or evidence-less steps are rejected.",
   args: {
     finding_id: tool.schema.number().describe("Finding ID from audit_save_finding"),
     steps: tool.schema.string().describe(
-      'JSON array of sink chain steps. Each step: {"step_type":"Source|Transform|Sanitizer|Sink","file_path":"...","line_number":42,"code_snippet":"...","notes":"..."}'
+      'Non-empty JSON array of sink chain steps. Preferred step: {"step_type":"Source|Transform|Sanitizer|Sink","file_path":"...","line_number":42,"code_snippet":"...","notes":"..."}'
     ),
   },
   async execute(args) {
@@ -287,17 +485,22 @@ const auditSaveSinkChain = tool({
       db.close();
       return JSON.stringify({ error: "steps must be a JSON array" });
     }
+    const normalized = normalizeSinkChainSteps(steps);
+    if (normalized.error) {
+      db.close();
+      return JSON.stringify({ error: normalized.error });
+    }
     const insert = db.prepare(
       `INSERT INTO sink_chains (finding_id, step_order, step_type, file_path, line_number, code_snippet, notes)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
     );
-    for (let i = 0; i < steps.length; i++) {
-      const s = steps[i];
+    for (let i = 0; i < normalized.steps.length; i++) {
+      const s = normalized.steps[i];
       insert.run([args.finding_id, i, s.step_type ?? null, s.file_path ?? null,
                   s.line_number ?? null, s.code_snippet ?? null, s.notes ?? null]);
     }
     db.close();
-    return JSON.stringify({ saved: steps.length });
+    return JSON.stringify({ saved: normalized.steps.length, discarded_steps: normalized.discarded });
   },
 });
 
@@ -684,7 +887,7 @@ const auditSaveVerification = tool({
 });
 
 const auditUpdateFindingAfterVerification = tool({
-  description: "Update the canonical finding after verification. Use this to write back enriched root cause, exploit method, PoC, severity/confidence changes, and optionally replace the sink chain before final report generation.",
+  description: "Update the canonical finding after verification. Use this to write back enriched root cause, exploit method, PoC, severity/confidence changes, and optionally replace the sink chain before final report generation. Empty or evidence-less sink_chain_steps are rejected.",
   args: {
     finding_id:       tool.schema.number().describe("Finding ID to update after verification"),
     title:            tool.schema.string().optional().describe("Updated vulnerability title"),
@@ -701,7 +904,7 @@ const auditUpdateFindingAfterVerification = tool({
     cvss_score:       tool.schema.number().optional().describe("Updated CVSS score"),
     cwe:              tool.schema.string().optional().describe("Updated CWE"),
     sink_chain_steps: tool.schema.string().optional().describe(
-      'Optional JSON array replacing sink chain steps. Each step: {"step_type":"Source|Transform|Sanitizer|Sink","file_path":"...","line_number":42,"code_snippet":"...","notes":"..."}'
+      'Optional non-empty JSON array replacing sink chain steps. Preferred step: {"step_type":"Source|Transform|Sanitizer|Sink","file_path":"...","line_number":42,"code_snippet":"...","notes":"..."}'
     ),
   },
   async execute(args) {
@@ -713,6 +916,7 @@ const auditUpdateFindingAfterVerification = tool({
     }
 
     let replacementSteps;
+    let discardedReplacementSteps = 0;
     if (args.sink_chain_steps !== undefined) {
       try {
         replacementSteps = JSON.parse(args.sink_chain_steps);
@@ -724,6 +928,13 @@ const auditUpdateFindingAfterVerification = tool({
         db.close();
         return JSON.stringify({ error: "sink_chain_steps must be a JSON array" });
       }
+      const normalized = normalizeSinkChainSteps(replacementSteps);
+      if (normalized.error) {
+        db.close();
+        return JSON.stringify({ error: normalized.error });
+      }
+      replacementSteps = normalized.steps;
+      discardedReplacementSteps = normalized.discarded;
     }
 
     const updates = [];
@@ -760,7 +971,12 @@ const auditUpdateFindingAfterVerification = tool({
     }
 
     db.close();
-    return JSON.stringify({ ok: true, updated_fields: updates.length, replaced_steps });
+    return JSON.stringify({
+      ok: true,
+      updated_fields: updates.length,
+      replaced_steps,
+      discarded_steps: discardedReplacementSteps,
+    });
   },
 });
 
@@ -799,14 +1015,24 @@ const auditGetFindingsForVerification = tool({
       const latestVerification = db.query(
         "SELECT * FROM finding_verifications WHERE finding_id=? ORDER BY id DESC LIMIT 1"
       ).get(f.id);
-      if (latestVerification && !args.include_verified) continue;
-
       const sinkChainSteps = db.query(
         "SELECT * FROM sink_chains WHERE finding_id=? ORDER BY step_order"
       ).all(f.id);
+      const chainStatus = chainEvidenceStatus(sinkChainSteps);
+      const needsChainRepair = requiresReportEvidenceChain(f, latestVerification) && !chainStatus.complete;
+      if (latestVerification && !args.include_verified && !needsChainRepair) continue;
+
       findings.push({
         ...f,
         sink_chain_steps: sinkChainSteps,
+        reportable_sink_chain_steps: chainStatus.steps,
+        chain_quality: {
+          has_evidence: chainStatus.hasEvidence,
+          has_source: chainStatus.hasSource,
+          has_sink: chainStatus.hasSink,
+          complete: chainStatus.complete,
+          needs_repair: needsChainRepair,
+        },
         latest_verification: latestVerification ?? null,
       });
     }
@@ -903,10 +1129,8 @@ const auditListSessions = tool({
 
 // ─── Report generation helpers ───────────────────────────────────────────────
 
-const SEVERITY_ORDER = ["Critical", "High", "Medium", "Low", "Info"];
-
 function effectiveSeverity(f, verification) {
-  const current = SEVERITY_ORDER.includes(f.severity) ? f.severity : "Info";
+  const current = normalizeSeverity(f.severity);
   const idx = SEVERITY_ORDER.indexOf(current);
   const action = verification?.severity_action;
   if (action === "DROP") return "Info";
@@ -916,8 +1140,9 @@ function effectiveSeverity(f, verification) {
 }
 
 function severityBadge(s) {
+  const normalized = normalizeSeverity(s);
   const colors = { Critical: "#d32f2f", High: "#f57c00", Medium: "#fbc02d", Low: "#388e3c", Info: "#1976d2" };
-  return `<span style="background:${colors[s]??'#888'};color:#fff;padding:2px 8px;border-radius:3px;font-size:0.85em;font-weight:bold">${s}</span>`;
+  return `<span style="background:${colors[normalized]??'#888'};color:#fff;padding:2px 8px;border-radius:3px;font-size:0.85em;font-weight:bold">${normalized}</span>`;
 }
 
 function escapeHtml(s) {
@@ -966,16 +1191,6 @@ function langForPath(filePath) {
   return map[ext] ?? "";
 }
 
-function normalizeStepType(type) {
-  const t = String(type ?? "").trim();
-  if (!t) return "Step";
-  if (/source/i.test(t)) return "Source";
-  if (/sink/i.test(t)) return "Sink";
-  if (/saniti[sz]er|filter|validate|escape/i.test(t)) return "Sanitizer";
-  if (/transform|propagat|build|convert|process/i.test(t)) return "Transform";
-  return t;
-}
-
 function stepLocation(s) {
   return s.file_path ? `${s.file_path}${s.line_number ? `:${s.line_number}` : ""}` : "-";
 }
@@ -989,7 +1204,8 @@ function stepSummary(s) {
 }
 
 function sourceStatusForSteps(steps) {
-  const source = steps.find(s => normalizeStepType(s.step_type) === "Source");
+  const reportable = reportableSinkSteps(steps);
+  const source = reportable.find(s => normalizeStepType(s.step_type) === "Source");
   if (!source) return "NO_SOURCE";
   const text = `${source.notes ?? ""} ${source.code_snippet ?? ""}`.toLowerCase();
   if (/pseudo|constant|test|mock|fixture|internal only|no_source|not user/i.test(text)) return "PSEUDO_SOURCE";
@@ -1080,9 +1296,10 @@ function fallbackFlowSteps(f) {
 
 function findingVerificationStatus(f, steps, verification) {
   if (verification?.verdict) return verification.verdict;
-  if (!steps.length) return "NO_CHAIN";
-  const sourceStatus = sourceStatusForSteps(steps);
-  const hasSink = steps.some(s => normalizeStepType(s.step_type) === "Sink");
+  const chainStatus = chainEvidenceStatus(steps);
+  if (!chainStatus.hasEvidence) return "NO_CHAIN";
+  const sourceStatus = sourceStatusForSteps(chainStatus.steps);
+  const hasSink = chainStatus.hasSink;
   if (sourceStatus === "TRUE_SOURCE" && hasSink) return "VERIFIED";
   if (sourceStatus === "NO_SOURCE" && hasSink) return "SINK_ONLY";
   if (!hasSink) return "PARTIAL";
@@ -1090,7 +1307,8 @@ function findingVerificationStatus(f, steps, verification) {
 }
 
 function verificationSourceStatus(steps, verification) {
-  return verification?.source_status || (steps.length ? sourceStatusForSteps(steps) : "NO_CHAIN");
+  const chainStatus = chainEvidenceStatus(steps);
+  return verification?.source_status || (chainStatus.hasEvidence ? sourceStatusForSteps(chainStatus.steps) : "NO_CHAIN");
 }
 
 function verificationAction(verification, fallbackVerification, sourceStatus) {
@@ -1103,7 +1321,7 @@ function verificationAction(verification, fallbackVerification, sourceStatus) {
 function buildVerificationSummaryMd(findings, sinkMap, verificationMap = {}) {
   if (!findings.length) return "";
   const rows = findings.map(f => {
-    const steps = sinkMap[f.id] ?? [];
+    const steps = reportableSinkSteps(sinkMap[f.id] ?? []);
     const verification = verificationMap[f.id];
     const status = findingVerificationStatus(f, steps, verification);
     const sourceStatus = verificationSourceStatus(steps, verification);
@@ -1118,7 +1336,7 @@ function buildVerificationSummaryMd(findings, sinkMap, verificationMap = {}) {
 function buildVerificationSummaryHtml(findings, sinkMap, verificationMap = {}) {
   if (!findings.length) return "";
   const rows = findings.map(f => {
-    const steps = sinkMap[f.id] ?? [];
+    const steps = reportableSinkSteps(sinkMap[f.id] ?? []);
     const verification = verificationMap[f.id];
     const status = findingVerificationStatus(f, steps, verification);
     const sourceStatus = verificationSourceStatus(steps, verification);
@@ -1238,7 +1456,8 @@ function buildCandidateCoverageHtml(coverageRows = [], uncheckedRows = []) {
 }
 
 function buildSinkChainMd(steps, f, verification) {
-  const displaySteps = steps.length ? steps : fallbackFlowSteps(f);
+  const reportableSteps = reportableSinkSteps(steps);
+  const displaySteps = reportableSteps.length ? reportableSteps : fallbackFlowSteps(f);
   const sourceStatus = verificationSourceStatus(displaySteps, verification);
   const warning = sourceStatus === "TRUE_SOURCE"
     ? ""
@@ -1268,7 +1487,8 @@ function buildSinkChainMd(steps, f, verification) {
 }
 
 function buildSinkChainHtml(steps, f, verification) {
-  const displaySteps = steps.length ? steps : fallbackFlowSteps(f);
+  const reportableSteps = reportableSinkSteps(steps);
+  const displaySteps = reportableSteps.length ? reportableSteps : fallbackFlowSteps(f);
   if (!displaySteps.length) {
     return `<section><h4>四、数据流总览</h4><p><em>当前数据库未记录 Source→Sink 数据流。该项不能作为高危结论展示，应先完成复核补链。</em></p></section>
       <section><h4>五、漏洞数据流分析 / 关键代码分析</h4><p><em>当前数据库未记录关键代码片段。</em></p></section>`;
@@ -1343,7 +1563,7 @@ function generateMarkdown(session, project, findings, sinkMap, attackChains, cha
 
   md += `## 漏洞详情\n\n`;
   for (const f of orderedFindings) {
-    const steps = sinkMap[f.id] ?? [];
+    const steps = reportableSinkSteps(sinkMap[f.id] ?? []);
     const verification = verificationMap[f.id];
     const reportSeverity = effectiveSeverity(f, verification);
     const status = findingVerificationStatus(f, steps, verification);
@@ -1415,7 +1635,7 @@ function generateHtml(session, project, findings, sinkMap, attackChains, chainSt
 
   let findingsHtml = "";
   for (const f of orderedFindings) {
-    const steps = sinkMap[f.id] ?? [];
+    const steps = reportableSinkSteps(sinkMap[f.id] ?? []);
     const verification = verificationMap[f.id];
     const reportSeverity = effectiveSeverity(f, verification);
     const status = findingVerificationStatus(f, steps, verification);
@@ -1565,6 +1785,34 @@ const auditGenerateReport = tool({
         findings: findings.length,
         verified: findings.length - missingVerificationIds.length,
         missing_finding_ids: missingVerificationIds,
+      });
+    }
+
+    const missingEvidenceChains = findings
+      .map((f) => {
+        const verification = verificationMap[f.id];
+        const chainStatus = chainEvidenceStatus(sinkMap[f.id] ?? []);
+        return {
+          finding_id: f.id,
+          title: f.title,
+          severity: effectiveSeverity(f, verification),
+          chain_quality: {
+            has_evidence: chainStatus.hasEvidence,
+            has_source: chainStatus.hasSource,
+            has_sink: chainStatus.hasSink,
+            complete: chainStatus.complete,
+          },
+        };
+      })
+      .filter((row) => ["Critical", "High", "Medium"].includes(row.severity) && !row.chain_quality.complete);
+    if (missingEvidenceChains.length && !args.allow_unverified) {
+      db.close();
+      return JSON.stringify({
+        error: "missing_evidence_chains",
+        message: "Final report requires Critical/High/Medium findings to have usable Source-to-Sink chain rows. Re-run audit_get_findings_for_verification for these finding IDs and call audit_update_finding_after_verification with valid sink_chain_steps.",
+        findings: findings.length,
+        missing_finding_ids: missingEvidenceChains.map((row) => row.finding_id),
+        missing_evidence_chains: missingEvidenceChains,
       });
     }
 

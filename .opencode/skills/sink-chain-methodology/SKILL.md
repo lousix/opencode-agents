@@ -134,6 +134,18 @@ Source、关键 Transform、净化点、Sink 附带代码，中间节点可用 f
 > 真实性提示: 当前链路未记录真实 Source，报告前复核应降级。
 ```
 
+## 数据库 steps 格式（强制）
+
+调用 `audit_save_sink_chain` 或 `audit_update_finding_after_verification(..., sink_chain_steps)` 时，steps 必须是非空 JSON 数组。每个节点优先使用固定字段:
+
+```json
+{"step_type":"Source|Transform|Sanitizer|Sink","file_path":"...","line_number":42,"code_snippet":"...","notes":"..."}
+```
+
+- Critical/High/Medium 至少包含一个 `Source` 和一个 `Sink`。
+- Source/Sink 必须带文件行号或真实代码片段；不能只写自然语言总结。
+- 工具返回 `error`、`saved=0` 或 `replaced_steps=0` 时，必须修正 steps 后重试。
+
 ---
 
 ## 引用 references/core/taint_analysis.md

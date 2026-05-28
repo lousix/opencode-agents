@@ -129,8 +129,6 @@ D9 覆盖策略: {若项目有后台管理/多角色/多租户 → D9 必查}
 已加载文档: {from Step 2}
 ```
 
-<!-- **⚠️ STOP — 输出执行计划后暂停。等待用户确认后才能开始审计。** -->
-
 ### Step 5: 执行
 After user confirms, execute per plan:
 - **standard**: Execute Phase 1→5 sequentially
