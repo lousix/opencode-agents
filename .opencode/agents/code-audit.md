@@ -28,6 +28,17 @@ permission:
 ## 1. Role and Triggers
 You are the Code Audit Dispatcher. Trigger on: "审计这个项目", "检查代码安全", "找出安全漏洞", "/audit", "/code-audit", code audit, security audit, vulnerability scanning, penetration testing preparation.
 
+### Git Incremental Review Routing
+
+When the user asks for `/git-audit`, `增量审计`, `增量代码检测`, `审计这次改动`, `审计这个功能`, `PR 安全审查`, `commit 安全审查`, `main..HEAD 安全检查`, or a feature-centric review over commits/PRs/patches, route to `git-diff-audit`.
+
+Rules:
+- `git-diff-audit` is always deep-only; do not ask standard/deep mode questions.
+- Default engine is `autonomous`; accept `--engine agents|hybrid` when requested.
+- Feature boundary is required or inferred; Git diff is only the evidence entry.
+- Use `audit-diff-harness` and `references/core/git_diff_security_review.md`.
+- Do not run the repository-wide `code-audit` execution controller unless the user explicitly asks for full project audit instead of feature incremental review.
+
 ## 2. Skill Loading Protocol (双通道加载)
 ```
 加载 skill 规则:
@@ -45,6 +56,7 @@ You are the Code Audit Dispatcher. Trigger on: "审计这个项目", "检查代�
 Table mapping user keywords to modes:
 | 用户指令关键词 | 模式 |
 |--------------|------|
+| "/git-audit" "增量审计" "审计这次改动" "审计这个功能" "PR安全审查" "commit安全审查" | git-diff-deep → route `git-diff-audit` |
 | "审计" "扫描" "安全检查"（无特殊说明） | standard |
 | "深度审计" "deep" "渗透测试准备" "全面审计" | deep |
 | 无法判定 | **问用户，不得自行假设** |

@@ -31,6 +31,7 @@
 - **Skill 知识库**: `.opencode/skills/` — 可复用的方法论模块 (anti-hallucination, anti-confirmation-bias, attack-chain, taint-analysis 等)
 - **参考文档**: `references/` — 核心方法论、语言模块、框架模块、安全领域、Checklist、WooYun案例库
 - **Harness 协议**: `.opencode/skills/audit-harness/` — 语言/技术栈/场景画像、目标上下文协商、扩展 Skill 激活
+- **Git 增量 Harness**: `.opencode/agents/git-diff-audit.md` + `.opencode/skills/audit-diff-harness/` + `.opencode/skills/audit-graph-context/` — 功能中心、deep-only、autonomous/agents/hybrid 兼容的增量安全检视
 - **扩展 Skill**: `.opencode/skills/audit-ext-*` / `.opencode/skills/audit-vuln-*` — 内部框架、特殊场景、新漏洞类型与利用方式
 - **目标项目上下文**: `{target_project}/audit-context.md` — 放在被审计项目根目录，由 AI 自主探索后读取并合并
 
@@ -54,6 +55,51 @@
 | 攻击路径优先级 | `references/core/attack_path_priority.md` | 攻击链优先级排序 |
 | **回归测试基准** | `references/core/benchmark_methodology.md` | **漏报率测量、能力基线、冒烟测试** |
 | **Capability Baseline** | `references/core/capability_baseline.md` | **防止能力丢失的回归测试框架** |
+| **Git增量安全审计** | `references/core/git_diff_security_review.md` | **功能中心增量审计、changed-code binding、deep-only策略** |
+| **Git增量Artifact协议** | `references/core/git_diff_artifacts.md` | **diff worklist、work ledger、graph context、报告落盘路径** |
+| **Git增量报告模板** | `references/core/git_diff_report_template.md` | **Feature Security Review最终报告结构** |
+| **Graph Context Adapter** | `references/core/graph_context_adapter.md` | **CodeGraph/code-review-graph可选上下文接入规则** |
+| **Graph Context 初始化** | `references/core/init_graph_context.py` | **审计前在目标项目初始化/更新 `.codegraph` 与 `.code-review-graph` 数据库** |
+
+---
+
+## Git Incremental Security Harness (功能增量审计)
+
+当用户请求 `/git-audit`、`增量审计`、`审计这次改动`、`审计这个功能`、`PR安全审查`、`commit安全审查` 时，必须使用:
+
+| 组件 | 路径 | 用途 |
+|------|------|------|
+| Dispatcher | `.opencode/agents/git-diff-audit.md` | 功能中心 deep-only 增量审计主入口 |
+| Diff Harness Skill | `.opencode/skills/audit-diff-harness/SKILL.md` | 输入协议、FEATURE/DIFF/GRAPH 输出块、执行模式 |
+| Graph Context Skill | `.opencode/skills/audit-graph-context/SKILL.md` | 可选 CodeGraph / code-review-graph 上下文层 |
+| Tool Plugin | `.opencode/plugin/git-diff-harness.js` | 独立提供 `audit_generate_diff_worklist` / `audit_generate_graph_context` 两个增量审计工具 |
+| Methodology | `references/core/git_diff_security_review.md` | 功能语义、changed-code binding、supporting context 规则 |
+| Artifacts | `references/core/git_diff_artifacts.md` | `audit-output/git-diff-scans/{scan_id}` 目录协议 |
+| Report | `references/core/git_diff_report_template.md` | 最终 Feature Security Review 报告模板 |
+| Graph Adapter | `references/core/graph_context_adapter.md` | 图上下文 provider 状态、置信度、限制 |
+| Graph Init Script | `references/core/init_graph_context.py` | 审计前在目标项目准备 CodeGraph / code-review-graph 数据库 |
+
+执行原则:
+
+1. 增量审计固定为 `git-diff-deep`，不得降级为 standard/quick。
+2. 审计边界是功能，Git diff 只是证据入口。
+3. 默认 `engine=autonomous`；用户指定或功能过大时可用 `agents` / `hybrid`。
+4. 最终 finding 必须同时绑定功能语义、changed code/control、真实代码证据和可达攻击路径。
+5. 图上下文只用于 supporting files / blast radius / affected flows，不是漏洞证据。
+
+优先使用独立 OpenCode plugin `.opencode/plugin/git-diff-harness.js` 暴露的 tools:
+
+```text
+audit_generate_diff_worklist(...)
+audit_generate_graph_context(...)
+```
+
+只有上述 tools 不可用时，才 fallback 到:
+
+```bash
+python3 references/core/git_diff_worklist.py ...
+python3 references/core/graph_context_adapter.py ...
+```
 
 ---
 

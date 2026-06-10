@@ -38,6 +38,29 @@
         }
       }
     },
+    "git-diff-audit": {
+      "description": "Feature-centric deep incremental security review orchestrator for Git-backed code changes. Supports autonomous, agents, and hybrid engines.",
+      "mode": "primary",
+      "temperature": 0.15,
+      "prompt": "{file:.opencode/agents/git-diff-audit.md}",
+      "tools": {
+        "write": true,
+        "edit": true,
+        "bash": true,
+        "skill": true
+      },
+      "permission": {
+        "task": {
+          "*": "allow"
+        },
+        "bash": {
+          "*": "allow"
+        },
+        "skill": {
+          "*": "allow"
+        }
+      }
+    },
     "audit-recon": {
       "description": "Phase 1 reconnaissance agent: tech stack identification, attack surface mapping, module enumeration, authentication chain analysis, and fast exclusion.",
       "mode": "subagent",
