@@ -1,6 +1,6 @@
-# Feature Incremental Security Review Report Template
+# Feature Incremental Security Review Supplement Template
 
-Use this template for feature-centric Git incremental deep reviews.
+Use this template for the feature-scoped supplement of Git incremental deep reviews. The canonical final report should be generated through `audit_generate_report` when available.
 
 ```markdown
 # Feature Security Review: <feature name>
@@ -14,7 +14,8 @@ Use this template for feature-centric Git incremental deep reviews.
 | Git target | `<mode/base/head/commits/patch>` |
 | Engine | `autonomous | agents | hybrid` |
 | Graph context | `none | low | medium | high` |
-| Report path | `<scan_dir>/report.md` |
+| Canonical report | `<audit_generate_report markdown/html paths>` |
+| Supplement path | `<scan_dir>/feature_review.md` |
 | Artifacts | `<scan_dir>/artifacts` |
 
 ### Code Scope

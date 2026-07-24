@@ -16,7 +16,9 @@ artifacts_dir=<scan_dir>/artifacts
 
 ```text
 <scan_dir>/
-  report.md
+  report.md                      # compatibility pointer/copy when needed
+  feature_review.md              # feature-scoped Git incremental supplement
+  <audit_generate_report outputs> # canonical Markdown/HTML DB-backed reports
   artifacts/
     01_context/
       feature_profile.md
@@ -215,4 +217,14 @@ Rules:
 
 ## Final Report
 
-`report.md` is the only required final report. It must be written even when no findings survive, and it must include reviewed surfaces and known gaps.
+The canonical final report must come from the existing DB-backed report generator when available:
+
+```text
+audit_generate_report(session_id, output_dir=<scan_dir>, allow_unverified=false)
+```
+
+This preserves report-stage verification, sink-chain validation, severity calibration, deduplication, Markdown/HTML output, and the existing audit DB contract.
+
+`feature_review.md` is the Git incremental supplement. It must include feature scope, diff scope, worklist/graph coverage, changed-code binding notes, reviewed surfaces, and known gaps.
+
+`report.md` may be a compatibility copy/pointer to the canonical Markdown report. Only when `audit_generate_report` is unavailable or fails may the feature template become the fallback final report; record that limitation explicitly.

@@ -296,13 +296,23 @@ graph_priority
 
 ## Report Rules
 
-最终报告使用 `references/core/git_diff_report_template.md`。报告必须保存到:
+最终报告必须优先使用现有 DB-backed 报告链路:
 
 ```text
-{target_project}/audit-output/git-diff-scans/{scan_id}/report.md
+audit_get_findings_for_verification(session_id)
+audit_update_finding_after_verification(...)
+audit_generate_report(session_id, output_dir={scan_dir}, allow_unverified=false)
 ```
 
-报告必须包含:
+`audit_generate_report` 生成的 Markdown/HTML 是 canonical final report。不得因为这是 Git 增量审计就绕过既有 verification、sink-chain、deduplication、severity calibration 和 report generation 工具。
+
+`references/core/git_diff_report_template.md` 只用于 feature-scoped 补充报告，保存到:
+
+```text
+{target_project}/audit-output/git-diff-scans/{scan_id}/feature_review.md
+```
+
+补充报告必须包含:
 - 功能画像
 - 代码范围
 - 文档上下文
@@ -310,3 +320,5 @@ graph_priority
 - Candidate 覆盖与 Known Gaps
 - Final Findings
 - No findings reason (若无漏洞)
+
+只有当 `audit_generate_report` 不可用或失败时，才允许把 feature template 作为 fallback final report，并必须记录 `audit_generate_report_unavailable`。

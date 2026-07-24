@@ -57,7 +57,7 @@
 | **Capability Baseline** | `references/core/capability_baseline.md` | **防止能力丢失的回归测试框架** |
 | **Git增量安全审计** | `references/core/git_diff_security_review.md` | **功能中心增量审计、changed-code binding、deep-only策略** |
 | **Git增量Artifact协议** | `references/core/git_diff_artifacts.md` | **diff worklist、work ledger、graph context、报告落盘路径** |
-| **Git增量报告模板** | `references/core/git_diff_report_template.md` | **Feature Security Review最终报告结构** |
+| **Git增量补充报告模板** | `references/core/git_diff_report_template.md` | **Feature Security Review补充报告结构；最终报告优先走 `audit_generate_report`** |
 | **Graph Context Adapter** | `references/core/graph_context_adapter.md` | **CodeGraph/code-review-graph可选上下文接入规则** |
 | **Graph Context 初始化** | `references/core/init_graph_context.py` | **审计前在目标项目初始化/更新 `.codegraph` 与 `.code-review-graph` 数据库** |
 
@@ -75,7 +75,7 @@
 | Tool Plugin | `.opencode/plugin/git-diff-harness.js` | 独立提供 `audit_generate_diff_worklist` / `audit_generate_graph_context` 两个增量审计工具 |
 | Methodology | `references/core/git_diff_security_review.md` | 功能语义、changed-code binding、supporting context 规则 |
 | Artifacts | `references/core/git_diff_artifacts.md` | `audit-output/git-diff-scans/{scan_id}` 目录协议 |
-| Report | `references/core/git_diff_report_template.md` | 最终 Feature Security Review 报告模板 |
+| Report Supplement | `references/core/git_diff_report_template.md` | Feature Security Review 补充报告模板；最终报告优先走 `audit_generate_report` |
 | Graph Adapter | `references/core/graph_context_adapter.md` | 图上下文 provider 状态、置信度、限制 |
 | Graph Init Script | `references/core/init_graph_context.py` | 审计前在目标项目准备 CodeGraph / code-review-graph 数据库 |
 

@@ -197,7 +197,9 @@ agents      强制多子 Agent 分工，适合需要结构化并行覆盖的场�
 
 ```text
 <target_project>/audit-output/git-diff-scans/<scan_id>/
-  report.md
+  <audit_generate_report 输出的 Markdown/HTML 报告>
+  feature_review.md
+  report.md                 # 兼容入口；仅在需要时指向/复制 canonical Markdown
   artifacts/
     02_worklist/
       diff_worklist.csv

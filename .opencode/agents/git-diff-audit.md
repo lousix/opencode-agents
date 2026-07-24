@@ -306,13 +306,36 @@ Critical/High 必须有 TRUE_SOURCE 或高置信 broken control；仅 sink 命�
 
 ### Step 8: Final Report
 
-使用 `references/core/git_diff_report_template.md`，保存:
+必须优先复用现有报告链路，不得绕过 `audit-report` / `audit_generate_report`。
+
+主路径:
 
 ```text
-{scan_dir}/report.md
+dispatch @audit-report with:
+  session_id={session_id}
+  output_dir={scan_dir}
+  feature_profile={FEATURE_PROFILE}
+  diff_scope={DIFF_SCOPE}
+  scan_dir={scan_dir}
 ```
 
-必须包含:
+`@audit-report` 必须执行既有报告前门禁:
+
+```text
+audit_get_findings_for_verification(session_id)
+audit_update_finding_after_verification(...)
+audit_generate_report(session_id, output_dir={scan_dir}, allow_unverified=false)
+```
+
+`audit_generate_report` 生成的 Markdown/HTML 是 canonical final report。增量审计不得自行跳过 verification、sink-chain、severity calibration、deduplication 和 report DB 读取逻辑。
+
+同时，使用 `references/core/git_diff_report_template.md` 生成 feature-scoped 补充报告，保存:
+
+```text
+{scan_dir}/feature_review.md
+```
+
+补充报告必须包含:
 
 - Scope
 - Document Context
@@ -323,7 +346,9 @@ Critical/High 必须有 TRUE_SOURCE 或高置信 broken control；仅 sink 命�
 - Positive Security Notes
 - Open Questions And Follow-Up
 
-无漏洞也必须写报告，说明为什么没有 finding surviving feature-binding 和 validation gates。
+若 `audit_generate_report` 工具不可用或调用失败，才 fallback 到 `references/core/git_diff_report_template.md` 并把 `{scan_dir}/feature_review.md` 复制/另存为 `{scan_dir}/report.md`，同时在 `[CONTEXT_GAPS]` 记录 `audit_generate_report_unavailable`。
+
+无漏洞也必须走 `audit_generate_report` 或明确 fallback，说明为什么没有 finding surviving feature-binding 和 validation gates。
 
 ## 5. Hard Rules
 
@@ -336,6 +361,7 @@ Critical/High 必须有 TRUE_SOURCE 或高置信 broken control；仅 sink 命�
 - 不得宣称覆盖完成，除非 `deep_review_input.csv` 每行都有 `work_ledger.md` receipt。
 - 不得写中间 JSONL candidate ledger；candidate 走现有 DB 或对话摘要。
 - 不得把 graph risk score 当作安全严重度；它只能影响审计优先级。
+- 不得绕过既有 `audit_generate_report` 报告链路；增量模板只能作为 feature 补充或 fallback。
 
 ## 6. Output Skeleton
 
@@ -352,6 +378,7 @@ Critical/High 必须有 TRUE_SOURCE 或高置信 broken control；仅 sink 命�
 最终输出:
 
 ```text
-[REPORT] {scan_dir}/report.md
+[REPORT] audit_generate_report markdown/html paths
+[FEATURE_REVIEW] {scan_dir}/feature_review.md
 [SUMMARY] findings={N}, critical={N}, high={N}, medium={N}, low={N}, gaps={N}
 ```
