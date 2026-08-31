@@ -9,6 +9,7 @@ tools:
   skill: true
 permission:
   "*": allow
+  question: deny
   read: allow
   grep: allow
   write: allow
@@ -16,7 +17,7 @@ permission:
   list: allow
   lsp: allow
   edit: allow
-  webfetch: ask
+  webfetch: allow
   bash: allow
   skill:
     "*": allow
@@ -33,10 +34,13 @@ permission:
 
 ---
 
-## 前置步骤: 截断检测（在汇总之前执行）
+## 前置步骤: Agent Run 与截断检测（在汇总之前执行）
 
-对每个 Agent 输出检查 `=== AGENT_OUTPUT_END ===` 哨兵:
-- 哨兵缺失 → 执行截断恢复流程（见调度器）
+先调用 `audit_list_agent_runs(session_id)`，必须存在 D1-D10 十条独立记录:
+- `QUEUED/RUNNING/RESUMING/INTERRUPTED` → 轮次尚未结束，按 checkpoint 恢复原 Agent
+- `NOT_APPLICABLE` → 必须有 reason/skip_code/checkpoint，覆盖标为 N/A
+- 哨兵缺失但 run 已 COMPLETED/NOT_APPLICABLE → 从数据库重建摘要，不重新扫描
+- 哨兵缺失且 run 未结束 → 执行 durable resume（见调度器）
 - HEADER 缺失 → 该 Agent 维度强制标记为 ⚠️
 - 所有 Agent 截断检测完成后，才进入汇总
 
@@ -50,13 +54,14 @@ D1-D10 覆盖矩阵 → 标记: ✅已覆盖 / ⚠️浅覆盖 / ❌未覆盖
 
 **覆盖判定按审计策略分轨（不同维度用不同标准）**:
 
-**【Sink-driven 维度: D1/D4/D5/D6】**
+**【Sink-driven 维度: D1/D4反序列化/D5/D6】**
 - ✅已覆盖 = 核心 Sink 类别均被搜索 + `CANDIDATE_LEDGER(candidate_kind=SINK)` 完整 + `candidate_triage=100%` + `unchecked=0` + Critical/High 候选 `high_path=100%`
 - ⚠️浅覆盖 = 搜索过但: Sink 类别有遗漏 / 仅 Grep 未追踪 / 只搜核心模块 / 缺少 SINK candidates / `candidate_triage<100%` / `unchecked>0` / Critical/High Sink 链不完整
 - ❌未覆盖 = 该维度未被任何 Agent 搜索
 
-**【Control-driven 维度: D3/D9】**
-- ✅已覆盖 = 端点审计率 ≥ 50%(deep) / ≥ 30%(standard) + 至少 3 种资源类型执行了 CRUD 权限一致性对比 + IDOR 检查覆盖了主要 findById/getById 调用 + `CANDIDATE_LEDGER(candidate_kind=CONTROL)` 完整 + `unchecked=0`
+**【Control-driven 维度: D2认证缺失/D3/D9】**
+- D3 ✅已覆盖 = 端点审计率 ≥ 50%(deep) / ≥ 30%(standard) + 至少 3 种资源类型 CRUD/IDOR 对比 + CONTROL ledger 完整 + `unchecked=0`
+- D9 ✅已覆盖 = 关键业务操作、状态、数值、并发和幂等不变量已枚举 + CONTROL ledger 完整 + `unchecked=0`
 - ⚠️浅覆盖 = 仅 Grep 搜索 pattern 但未系统枚举端点验证 / 仅检查了部分资源类型 / 未对比 CRUD 一致性 / 缺少 CONTROL candidates / `unchecked>0`
 - ❌未覆盖 = 未执行 Control-driven 审计
 - 端点审计率 = 已验证权限的端点数 / Phase 1 矩阵总端点数
@@ -65,6 +70,11 @@ D1-D10 覆盖矩阵 → 标记: ✅已覆盖 / ⚠️浅覆盖 / ❌未覆盖
 - ✅已覆盖 = 核心配置项均已检查 + 版本/算法已对比基线 + `CANDIDATE_LEDGER(candidate_kind=CONFIG)` 完整 + `unchecked=0`
 - ⚠️浅覆盖 = 仅检查了部分配置 / 未深入验证 / 缺少 CONFIG candidates / `unchecked>0`
 - ❌未覆盖 = 该维度未被任何 Agent 检查
+
+**【Memory-driven 维度: D4】**
+- ✅已覆盖 = 适用的 allocation/bounds/ownership/free/use 与 Unsafe/FFI 类别已枚举 + MEMORY ledger 完整 + `unchecked=0`
+- ⚠️浅覆盖 = 仅危险 API 搜索，未验证生命周期、边界或可达性，或 MEMORY ledger 有 OPEN/TIMEOUT
+- N/A = D4 run 有无反序列化/native/unsafe/FFI 攻击面的证据化 NOT_APPLICABLE
 
 ### Candidate Ledger 检查（防止"广搜浅挖"导致覆盖率虚高）
 
@@ -85,7 +95,7 @@ D1-D10 覆盖矩阵 → 标记: ✅已覆盖 / ⚠️浅覆盖 / ❌未覆盖
 
 - `UNCHECKED_CANDIDATES` 仅在 R1 从 `CANDIDATE_LEDGER` 的 OPEN/TIMEOUT 产生，R2 消化但不再生新候选类别
 - R2 Agent 禁止输出新的候选类别；若无法清空，必须保留 TIMEOUT 并写入 UNFINISHED
-- R2 后若仍有 `UNCHECKED_CANDIDATES`，最终报告必须列为 Known Gaps，不能宣称对应维度 100% 覆盖
+- R2 后若仍有 `UNCHECKED_CANDIDATES`，汇总索引必须列为待处置候选，不能宣称对应维度 100% 覆盖
 - 候选链深度 = 1（R1 产生账本 → R2 清空 OPEN/TIMEOUT → 终止或显式 Known Gap）
 
 ---
@@ -103,12 +113,12 @@ FILES_READ: [已读文件+关键结论, R2不再重读]
 GREP_DONE:  [已执行的Grep patterns, R2不再重复]
 ```
 
-### 3. 缺口数 + 未清空 Candidate → R2 Agent 数量
+### 3. 缺口与中断 → 原维度 Agent 续跑
 
-- ❌/⚠️覆盖缺口 0-1 个，且 `UNCHECKED_CANDIDATES ≤ 20` → R2: 1 Agent (50 turns)
-- ❌/⚠️覆盖缺口 2-3 个，或 `UNCHECKED_CANDIDATES 21-60` → R2: 2 Agent (2×50 turns)
-- ❌/⚠️覆盖缺口 4+ 个，或 `UNCHECKED_CANDIDATES > 60` → R2: 3 Agent (3×50 turns)
-- 若仅 candidate ledger 存在 OPEN/TIMEOUT，R2 目标应明确为“清空 UNCHECKED_CANDIDATES”，不是重新全量扫描
+- 每个存在 ❌/⚠️、OPEN/TIMEOUT 或 INTERRUPTED 的维度，恢复该维度原 Agent。
+- 优先 runtime_handle；否则注入 `audit_get_agent_resume_context` 的最后 checkpoint。
+- 不按缺口把多个维度合并为通用 R2 Agent；并发不足时排队。
+- 若仅 ledger 存在 OPEN/TIMEOUT，目标是清空这些 candidate，不是重新全量扫描。
 
 ---
 

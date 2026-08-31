@@ -16,7 +16,7 @@
   "default_agent": "code-audit",
   "agent": {
     "code-audit": {
-      "description": "Professional code security audit orchestrator covering 55+ vulnerability types across 9 languages. Dispatches specialized audit subagents based on attack surface analysis.",
+      "description": "Professional code security audit orchestrator covering 55+ vulnerability types across 9 languages. Dispatches one durable agent for each D1-D10 dimension.",
       "mode": "primary",
       "temperature": 0.2,
       "prompt": "{file:.opencode/agents/code-audit.md}",
@@ -99,11 +99,11 @@
         "skill": { "*": "allow" }
       }
     },
-    "audit-d2d3d9-control": {
-      "description": "D2+D3+D9 control-driven audit agent: authentication chain verification, authorization/IDOR/CRUD consistency, business logic flaws, Mass Assignment, race conditions.",
+    "audit-d2-authentication": {
+      "description": "D2 authentication audit agent: login, JWT/token/session chains, MFA/reset flows, anonymous routes and authentication bypass.",
       "mode": "subagent",
       "temperature": 0.1,
-      "prompt": "{file:.opencode/agents/audit-d2d3d9-control.md}",
+      "prompt": "{file:.opencode/agents/audit-d2-authentication.md}",
       "tools": {
         "write": true,
         "edit": true,
@@ -117,11 +117,11 @@
         "skill": { "*": "allow" }
       }
     },
-    "audit-d4-rce": {
-      "description": "D4 RCE/deserialization audit agent (sink-driven): Java/Python/PHP deserialization, gadget chains, script engines, expression injection with sink chain tracing.",
+    "audit-d3-authorization": {
+      "description": "D3 authorization audit agent: endpoint permission coverage, role checks, IDOR, resource ownership, CRUD consistency and tenant access.",
       "mode": "subagent",
       "temperature": 0.1,
-      "prompt": "{file:.opencode/agents/audit-d4-rce.md}",
+      "prompt": "{file:.opencode/agents/audit-d3-authorization.md}",
       "tools": {
         "write": true,
         "edit": true,
@@ -135,11 +135,11 @@
         "skill": { "*": "allow" }
       }
     },
-    "audit-d5d6-file-ssrf": {
-      "description": "D5+D6 file operations and SSRF audit agent (sink-driven): file upload/download, path traversal, Zip Slip, SSRF, JDBC URL injection with sink chain tracing.",
+    "audit-d4-unsafe-runtime": {
+      "description": "D4 unsafe runtime audit agent: deserialization/gadget chains, native memory corruption, unsafe/FFI boundaries, lifetime and ownership errors.",
       "mode": "subagent",
       "temperature": 0.1,
-      "prompt": "{file:.opencode/agents/audit-d5d6-file-ssrf.md}",
+      "prompt": "{file:.opencode/agents/audit-d4-unsafe-runtime.md}",
       "tools": {
         "write": true,
         "edit": true,
@@ -153,11 +153,11 @@
         "skill": { "*": "allow" }
       }
     },
-    "audit-d7d8d10-config": {
-      "description": "D7+D8+D10 config-driven audit agent: cryptography weaknesses, configuration exposure (Actuator/debug), supply chain CVEs, hardcoded secrets.",
+    "audit-d5-file-operations": {
+      "description": "D5 file-operation audit agent: upload/download, arbitrary read/write, path traversal, archive extraction, symlinks and temporary files.",
       "mode": "subagent",
       "temperature": 0.1,
-      "prompt": "{file:.opencode/agents/audit-d7d8d10-config.md}",
+      "prompt": "{file:.opencode/agents/audit-d5-file-operations.md}",
       "tools": {
         "write": true,
         "edit": true,
@@ -170,6 +170,46 @@
         },
         "skill": { "*": "allow" }
       }
+    },
+    "audit-d6-ssrf": {
+      "description": "D6 SSRF audit agent: outbound HTTP/RPC, URL parsing, webhook/proxy/image fetch, cloud metadata, protocols and JDBC URL injection.",
+      "mode": "subagent",
+      "temperature": 0.1,
+      "prompt": "{file:.opencode/agents/audit-d6-ssrf.md}",
+      "tools": {"write": true, "edit": true, "bash": true, "skill": true},
+      "permission": {"task": {"*": "allow"}, "skill": {"*": "allow"}}
+    },
+    "audit-d7-cryptography": {
+      "description": "D7 cryptography audit agent: key lifecycle, algorithms/modes, KDF, randomness, nonce/IV, password hashing, TLS and certificate validation.",
+      "mode": "subagent",
+      "temperature": 0.1,
+      "prompt": "{file:.opencode/agents/audit-d7-cryptography.md}",
+      "tools": {"write": true, "edit": true, "bash": true, "skill": true},
+      "permission": {"task": {"*": "allow"}, "skill": {"*": "allow"}}
+    },
+    "audit-d8-security-config": {
+      "description": "D8 security-configuration audit agent: debug/exposure, CORS/CSP/cookies, error/log leakage, secrets, profiles and compiler/runtime hardening.",
+      "mode": "subagent",
+      "temperature": 0.1,
+      "prompt": "{file:.opencode/agents/audit-d8-security-config.md}",
+      "tools": {"write": true, "edit": true, "bash": true, "skill": true},
+      "permission": {"task": {"*": "allow"}, "skill": {"*": "allow"}}
+    },
+    "audit-d9-business-logic": {
+      "description": "D9 business-logic audit agent: state/value invariants, workflow bypass, race/replay, mass assignment, quotas and tenant consistency.",
+      "mode": "subagent",
+      "temperature": 0.1,
+      "prompt": "{file:.opencode/agents/audit-d9-business-logic.md}",
+      "tools": {"write": true, "edit": true, "bash": true, "skill": true},
+      "permission": {"task": {"*": "allow"}, "skill": {"*": "allow"}}
+    },
+    "audit-d10-supply-chain": {
+      "description": "D10 software supply-chain audit agent: dependency manifests/locks, vulnerable versions and reachable APIs, registries, scripts and CI dependency trust.",
+      "mode": "subagent",
+      "temperature": 0.1,
+      "prompt": "{file:.opencode/agents/audit-d10-supply-chain.md}",
+      "tools": {"write": true, "edit": true, "bash": true, "skill": true},
+      "permission": {"task": {"*": "allow"}, "skill": {"*": "allow"}}
     },
     "audit-evaluation": {
       "description": "Round evaluation agent: coverage gap assessment, three-question rule, sink fan-out check, cross-round transfer structure generation, adaptive round decisions.",
@@ -187,7 +227,7 @@
       }
     },
     "audit-verification": {
-      "description": "Report-stage verification agent: validates real Source, Source-to-Sink reachability, sanitizer effectiveness, exploitability, and writes verified facts back to the audit database.",
+      "description": "Per-finding detail agent: independently verifies one database finding, resumes from checkpoints, stores product remediation facts, and generates Chinese Markdown only.",
       "mode": "subagent",
       "temperature": 0.1,
       "prompt": "{file:.opencode/agents/audit-verification.md}",
@@ -208,9 +248,9 @@
       }
     },
     "audit-report": {
-      "description": "Report generation agent: report-stage verification orchestration, severity calibration, attack chain construction, cross-agent deduplication, structured report output with graded sink chain code.",
+      "description": "Report coordinator: dispatches one detail agent per database finding, resumes interrupted runs, and generates Chinese aggregate indexes without duplicating finding bodies.",
       "mode": "subagent",
-      "temperature": 0.2,
+      "temperature": 0.1,
       "prompt": "{file:.opencode/agents/audit-report.md}",
       "tools": {
         "write": true,
@@ -230,6 +270,9 @@
     }
   },
   "permission": {
+    "question": "deny",
+    "webfetch": "allow",
+    "external_directory": "allow",
     "write": "allow",
     "edit": "allow",
     "bash": "allow",

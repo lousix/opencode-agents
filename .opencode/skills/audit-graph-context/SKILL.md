@@ -81,7 +81,7 @@ python3 references/core/graph_context_adapter.py ...
 3. 对每个队列项读取真实代码文件；只读 graph metadata 不算覆盖。
 4. 对 caller/callee 项执行 `caller -> changed/control -> callee/sink` 追踪，记录在 `work_ledger.md`。
 5. 如果跳过队列项，必须在 `[CONTEXT_GAPS]` 写明原因。
-6. 队列完成后，才回到普通 changed files，覆盖图数据未覆盖的文件、配置、Docker、文档和非代码资源。
+6. 队列完成后，才回到普通 changed files，覆盖图数据未覆盖的文件、非 Docker 配置、文档和非代码资源；Docker 内容始终排除。
 
 严禁:
 

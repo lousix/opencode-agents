@@ -18,7 +18,9 @@ artifacts_dir=<scan_dir>/artifacts
 <scan_dir>/
   report.md                      # compatibility pointer/copy when needed
   feature_review.md              # feature-scoped Git incremental supplement
-  <audit_generate_report outputs> # canonical Markdown/HTML DB-backed reports
+  index.md                       # Chinese merged full report with all confirmed finding bodies
+  index.html                     # optional browser view of the index
+  findings/<id>-<component>-<Chinese-title>.md # canonical per-finding reports; no per-finding HTML
   artifacts/
     01_context/
       feature_profile.md
@@ -139,7 +141,7 @@ covered | not_applicable | suppressed | deferred
 Candidate details should be saved through the existing audit DB:
 
 ```text
-audit_save_candidates(...)
+audit_upsert_candidates(agent_run_id=...)
 audit_save_finding(...)
 audit_save_sink_chain(...)
 audit_save_verification(...)
@@ -217,14 +219,16 @@ Rules:
 
 ## Final Report
 
-The canonical final report must come from the existing DB-backed report generator when available:
+The canonical finding reports must come from the DB-backed per-finding report pipeline:
 
 ```text
-audit_generate_report(session_id, output_dir=<scan_dir>, allow_unverified=false)
+audit_list_findings_for_detail(session_id, include_terminal=false)
+dispatch one audit-verification agent per finding_id
+audit_generate_report_index(session_id, output_dir=<scan_dir>, allow_unverified=false)
 ```
 
-This preserves report-stage verification, sink-chain validation, severity calibration, deduplication, Markdown/HTML output, and the existing audit DB contract.
+Each confirmed finding produces Chinese Markdown only. `index.md` merges the complete current body of every confirmed finding, while `index.html` remains a lightweight management index. The merged content must come from current per-finding artifacts rather than a second free-form rewrite, preserving per-finding verification, resumable checkpoints, sink-chain validation, severity calibration, remediation facts, and the audit DB contract.
 
 `feature_review.md` is the Git incremental supplement. It must include feature scope, diff scope, worklist/graph coverage, changed-code binding notes, reviewed surfaces, and known gaps.
 
-`report.md` may be a compatibility copy/pointer to the canonical Markdown report. Only when `audit_generate_report` is unavailable or fails may the feature template become the fallback final report; record that limitation explicitly.
+`report.md` may be a compatibility pointer to `index.md`. If the report pipeline is unavailable, the feature template remains a limited supplement and must not be presented as a completed per-finding report; record that limitation explicitly.

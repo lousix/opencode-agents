@@ -17,17 +17,17 @@
 │  职责: 模式判定 → 文档加载 → 侦察 → 执行计划 → Agent调度     │
 └──────────────────────────┬──────────────────────────────────┘
                            │ dispatch
-        ┌──────────┬───────┼───────┬──────────┬──────────┐
-        ▼          ▼       ▼       ▼          ▼          ▼
-   audit-recon  audit-d1  d2d3d9  d4-rce  d5d6-file  d7d8d10
-   (侦察)      (注入)   (控制)  (RCE)   (文件/SSRF) (配置)
-        │                                              │
-        └──────────────────────────────────────────────┘
+        ┌──────────┬──────────────────────────────────────┐
+        ▼          ▼                                      ▼
+   audit-recon  audit-d1 ... audit-d10             (全维度默认启动)
+   (侦察)       (每个 D* 一个独立 Agent；不适用须记录原因)
+        │                                                 │
+        └─────────────────────────────────────────────────┘
                            │
                     audit-evaluation → audit-verification → audit-report
 ```
 
-- **Agent 定义**: `.opencode/agents/` — 包含 code-audit (主调度器) 及 9 个专业 Subagent
+- **Agent 定义**: `.opencode/agents/` — 包含 code-audit（主调度器）、D1-D10 十个独立检测 Agent，以及侦察、评估、复核、报告 Agent
 - **Skill 知识库**: `.opencode/skills/` — 可复用的方法论模块 (anti-hallucination, anti-confirmation-bias, attack-chain, taint-analysis 等)
 - **参考文档**: `references/` — 核心方法论、语言模块、框架模块、安全领域、Checklist、WooYun案例库
 - **Harness 协议**: `.opencode/skills/audit-harness/` — 语言/技术栈/场景画像、目标上下文协商、扩展 Skill 激活
@@ -202,6 +202,7 @@ Harness 的目标是保持核心审计框架稳定，同时允许开发者用固
 4. 被激活的扩展 Skill 必须进入 Agent Contract，并由对应 Subagent 执行
 5. 扩展规则未执行时，相关 D 维度最多只能标记为浅覆盖
 6. 不要在目标项目 `.opencode/skills` 下搜索扩展；目标项目只提供 `audit-context.md`，扩展 Skill 从审计框架自身加载
+7. 全流程无人值守：不得请求用户确认、模式选择或上下文补充；缺口通过代码推断、保守默认值、降置信度和证据边界记录处理
 
 ---
 
@@ -235,7 +236,7 @@ Priority 3: Verification
 ```
 文件读取与搜索:
 - Read: 源代码、配置文件、CI/CD配置、IaC文件
-- Glob: 按模式批量搜索文件 (*.py, *.js, *.java, *.xml, *.yml, Dockerfile, *.tf)
+- Glob: 按模式批量搜索文件 (*.py, *.js, *.java, *.xml, *.yml, *.tf)；Dockerfile/Compose/Docker 目录始终排除
 - Grep: 基于正则的危险模式和敏感信息搜索
 ```
 
@@ -247,7 +248,7 @@ Priority 3: Verification
   前置条件:
   1. 用户明确请求 "修复"、"打补丁"、"生成修复代码"
   2. 清楚说明要修改的文件和内容
-  3. 提醒用户备份或确认版本控制
+  3. 自动检查版本控制状态并保留现有改动；不得追加备份确认步骤
 ```
 
 ### 错误恢复指导 (Error Recovery)
@@ -273,21 +274,6 @@ Never retry the same failed operation. Max 3 attempts per file. Proceed to repor
 
 ---
 
-## Docker Deployment Verification (Docker 部署验证)
-
-```bash
-# 生成验证环境
-code-audit --generate-docker-env
-
-# 启动并验证
-docker-compose up -d
-docker exec -it sandbox python /workspace/poc/verify_all.py
-```
-
-详见: `references/core/docker_verification.md`
-
----
-
 ## Taint Analysis Trigger (污点分析触发)
 
 当给定漏洞位置 (file:line) 时，自动加载污点分析模块，执行以下 5 步流程:
@@ -308,7 +294,7 @@ docker exec -it sandbox python /workspace/poc/verify_all.py
 ### v1.0 (Initial Public Release)
 - 9语言143项强制检测清单 (`references/checklists/`)
 - 双轨并行审计框架: Sink-driven + Control-driven + Config-driven
-- Docker部署验证框架 (`references/core/docker_verification.md`)
+- Dockerfile、Compose 与 Docker 目录不进入审计和 PoC 验证范围
 - WooYun 88,636案例库集成
 - 安全控制矩阵框架
 - OpenCode 调度器+Subagent+Skill 架构重构

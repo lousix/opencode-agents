@@ -127,9 +127,9 @@ Give 1-3 concrete fix directions and test ideas.
 
 List relevant controls that were present and effective.
 
-## Open Questions And Follow-Up
+## Unresolved Evidence Gaps
 
-Only include concrete unresolved feature-specific questions.
+Record concrete unresolved feature-specific evidence gaps, the conservative assumption used, and confidence impact. Do not ask the user to respond and do not block the report.
 ```
 
 ## Report Gates

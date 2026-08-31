@@ -77,8 +77,6 @@
 - 扩展 reference 以 `references/extensions/{name}.md` 或扩展声明路径为准
 - 通用 Java D3 仍需覆盖 IDOR、CRUD 权限一致性、管理员接口、批量操作和多租户隔离
 
-示例: Jalor 专项规则见 `.opencode/skills/audit-ext-jalor/SKILL.md` 与 `references/extensions/jalor.md`。
-
 ## D4: 反序列化
 
 **关键问题**:

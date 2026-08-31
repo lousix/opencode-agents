@@ -14,20 +14,21 @@ description: "Agent contract templates for R1 and R2+ rounds, including output f
 [搜索路径]   Phase 1 产出的核心代码目录列表
 [排除目录]   node_modules, .git, build, dist, target, test, tests, frontend
 [工具约束]   搜索用 Grep（ripgrep, 1-3秒）, 文件名用 Glob, 读文件用 Read
-             Bash 仅限系统命令（git, mvn, npm, docker）
+             Bash 仅限必要的 git、构建与依赖查询命令；Docker 内容始终排除
 [禁止写法]   Bash 中的 grep/find/cat（违反 = 10-100x 性能退化）
 [调用预算]   工具总调用 ≤400 次, Bash ≤300 次, 超过 200 次开始汇总
 [max_turns]  Task 工具的 max_turns 参数
 [Turn预留]   turns_used ≥ max_turns - 3 时停止探索，立即产出结构化输出
 [超时策略]   Bash timeout ≤30s, Grep 超时→缩小 path→连续失败 2 次→跳过
-[审计策略]   sink-driven | control-driven | config-driven
+[审计策略]   sink-driven | control-driven | config-driven | memory-driven
+[AGENT_RUN]  agent_run_id、runtime_handle、运行状态、最后 checkpoint
 [HARNESS_PROFILE]  语言画像、技术栈画像、场景画像、内部知识状态
 [ACTIVE_EXTENSIONS] 已激活 audit-ext-* / audit-vuln-* Skill、激活原因、适用 Agent/维度
-[CONTEXT_GAPS] AI 自主探索后仍需人工补充的问题，不阻塞当前审计
+[CONTEXT_GAPS] AI 自主探索后仍未确定的问题；采用保守默认值并记录置信度，不询问用户、不阻塞当前审计
 [轮次目标]   Round N 的目标函数 + 方法关键词
 [前轮输入]   Round N≥2 时的跨轮传递结构
 [增量约束]   R2+ 禁止重读 FILES_READ 文件、重复 GREP_DONE 模式
-[CANDIDATE_LEDGER] 全局候选账本，记录每个 in-scope Sink/Control/Config candidate 的状态和证据
+[CANDIDATE_LEDGER] 全局候选账本，记录每个 in-scope Sink/Control/Config/Memory candidate 的状态和证据
 [输出格式]   结构化摘要（见下方模板）
 [截断防御]   HEADER 开头 + AGENT_OUTPUT_END 结尾
 ```
@@ -45,8 +46,8 @@ description: "Agent contract templates for R1 and R2+ rounds, including output f
 
 | 轮次 | Agent 类型 | 数量 | max_turns | 工具调用上限 | 说明 |
 |------|-----------|------|-----------|-------------|------|
-| R1 | 广度扫描 | 3-5 | 25 | 400 | Grep 定位 + 入口识别 |
-| R2 | 增量补漏 | 1-3（按缺口） | 50 | 400 | 只覆盖 R1 缺口 + 数据流深度 |
+| R1 | D1-D10 独立 Agent | 10（可排队分波执行） | 25 | 400 | 每个维度都启动；无攻击面由 Agent 证据化 NOT_APPLICABLE |
+| R2 | 原维度 Agent 续跑 | 按 OPEN/TIMEOUT/INTERRUPTED | 50 | 400 | 读取 checkpoint，只继续未完成工作 |
 | R3 | 攻击链验证 | 0-1 | 15 | 400 | 仅有跨模块候选时启动 |
 
 **Token 节约规则**:
@@ -65,7 +66,8 @@ description: "Agent contract templates for R1 and R2+ rounds, including output f
 |----------------|----------|----------|
 | `SINK` | D1/D4/D5/D6 | 危险 Sink 命中、Source→Sink 链路候选 |
 | `CONTROL` | D2/D3/D9 | 认证、授权、业务控制缺失或不一致候选 |
-| `CONFIG` | D7/D8/D10 | 配置、加密、供应链风险候选 |
+| `CONFIG` | D2/D7/D8/D10 | 认证配置、加密、应用配置、供应链风险候选 |
+| `MEMORY` | D4 | 分配/边界/所有权/释放/使用、Unsafe/FFI/原生内存候选 |
 
 | 状态 | 含义 | 是否计入已分类 |
 |------|------|---------------|
@@ -86,10 +88,14 @@ description: "Agent contract templates for R1 and R2+ rounds, including output f
 - `unchecked = OPEN + TIMEOUT = 0`
 - Critical/High 候选的 `high_path = 已完成证据链 / 全部高危候选 = 100%`
 
-**落库规则**:
-- 若 `audit_save_candidates` 可用，所有 Agent 必须将 `CANDIDATE_LEDGER` 批量写入数据库。
-- D1/D4/D5/D6 仍可兼容旧 `audit_save_sink_candidates`，但新流程优先使用 `audit_save_candidates(candidate_kind="SINK")`。
+**落库与续跑规则**:
+- 所有 Agent 启动即调用 `audit_start_agent_run`，每个 invocation 结束必须调用 `audit_finish_agent_run`。
+- 所有 Agent 必须在各自 Agent 文件中显式调用 `audit_upsert_candidates`；候选枚举后立即保存，每关闭一个候选立即更新，禁止结束时才批量落库。
+- `audit_upsert_candidates` 通过稳定 `candidate_key` 幂等写入；Resume 不得生成重复 Candidate/Finding。
+- 适用性、候选枚举、每个候选/模块完成、预算保护与结束前必须调用 `audit_checkpoint_agent_run`。
+- D1/D4/D5/D6 不再使用旧 `audit_save_sink_candidates`；统一使用通用幂等 Candidate 工具。
 - R2 调度前优先调用 `audit_get_unchecked_candidates` / `audit_get_candidate_coverage` 获取 OPEN/TIMEOUT 和覆盖摘要。
+- Agent 中断时先用 `runtime_handle` 恢复原任务；不可用时读取 `audit_get_agent_resume_context`，只执行 checkpoint `remaining_work/active_trace`。
 - 禁止把中间候选账本写入 `audit-artifacts/*.jsonl` 或其他文件；落库失败不阻断审计，但必须在 HEADER/UNFINISHED 中说明 `candidate_db_write_failed` 并输出压缩摘要。
 
 ---
@@ -103,7 +109,8 @@ description: "Agent contract templates for R1 and R2+ rounds, including output f
 
 === HEADER START ===
 PROJECT_ROOT: {project_path}
-COVERAGE: D1=✅(findings=3,candidate_triage=37/37,unchecked=0,high_path=3/3), D2=⚠️(...), D3=❌, ...
+AGENT_RUN: id={agent_run_id}; status={RUNNING|COMPLETED|NOT_APPLICABLE|INTERRUPTED}; checkpoint={seq}; resume={native|checkpoint|none}
+COVERAGE: 当前唯一维度 Dn={✅|⚠️|N/A}(findings=3,candidate_triage=37/37,unchecked=0,high_path=3/3)
   candidate: candidate_triage=已分类in-scope candidates/全部in-scope candidates; unchecked=OPEN+TIMEOUT; high_path=完整证据链高危候选/全部高危候选
   control-driven(D3/D9): epr=已验证端点数/矩阵总端点数, crud_types=N, control_triage=已分类control candidates/全部control candidates
 ACTIVE_EXTENSIONS: {skill=done|partial|skipped(reason)}
@@ -123,6 +130,7 @@ SUMMARY: {kind}:{dimension} candidates={N}, in_scope={N}, triaged={N}, unchecked
 ITEMS: {file:line|candidate_kind|rule_id|status|reason|finding_id?} | ...  # ≤40项；超过则只放 OPEN/TIMEOUT + 代表性已关闭项
 UNCHECKED_CANDIDATES: {file:line|candidate_kind|rule_id|OPEN|next_step} | ...
 DB_WRITE: {ok|failed(reason)}
+CHECKPOINT: {seq|failed(reason)}
 === CANDIDATE_LEDGER END ===
 
 ### 发现列表（表格格式，按严重度排序）
@@ -160,7 +168,7 @@ DB_WRITE: {ok|failed(reason)}
 ---Agent Contract---
 0. 项目路径（绝对路径，唯一可信锚点）: {project_path}。
    0.1 先确认所有搜索路径都位于 {project_path} 之下；若缺失/不一致，立即停止扩散搜索，并在 HEADER/UNFINISHED 标记 `project_path_missing` 或 `path_out_of_scope`。
-   0.2 最终报告路径（audit-reports）相对 {project_path} 解析，不依赖当前 cwd；中间候选账本不得写入文件。
+   0.2 单漏洞 Markdown 和汇总索引路径（audit-reports）相对 {project_path} 解析，不依赖当前 cwd；中间候选账本不得写入文件。
 1. 搜索路径（搜索前先使用Grep工具确认文件完整路径，再使用Read工具读取）: {paths}。排除: {excludes}。
 1.1 Harness Profile: {HARNESS_PROFILE}。
 1.2 Active Extensions: {ACTIVE_EXTENSIONS}。若存在适用于当前 Agent/维度的扩展 Skill，必须加载并执行其 Agent Contract Additions / Finding Rules / Verification Rules。
@@ -177,13 +185,17 @@ DB_WRITE: {ok|failed(reason)}
    b. 类别上界: 每维度最多 20 个。
    c. 全量候选 triage: 每个 in-scope candidate 必须写入 CANDIDATE_LEDGER 并给出状态。
    d. 深度追踪分层: Critical/High/可疑候选必须补齐对应证据链；明确安全/测试/vendor/误报可分类关闭但必须给理由。
-   e. 完整账本必须通过 `audit_save_candidates` 入库；禁止写 audit-artifacts JSONL；对话输出摘要、全部 OPEN/TIMEOUT 和代表性已关闭项。
+   e. 启动先 `audit_start_agent_run`。完整账本必须通过 `audit_upsert_candidates` 增量入库；禁止写 audit-artifacts JSONL；对话输出摘要、全部 OPEN/TIMEOUT 和代表性已关闭项。
    f. 禁止用“抽样实例”声明覆盖完成；预算不足时标记 OPEN/TIMEOUT，并写入 UNCHECKED_CANDIDATES。
    g. R1 可产生 UNCHECKED_CANDIDATES；R2+ 只能消化前轮 UNCHECKED_CANDIDATES，不得为逃避覆盖而再生候选。
 9. 数据转换管道追踪:
    a. Sink → Grep 调用位置 → 追踪中间构造/转换层
    b. 重复直到 Source 或 5 层上限，每层 Read 验证
    c. 中间层无清洗 → 标记为独立注入入口
+9.5 ★ Durable checkpoint:
+    a. 适用性检查、候选枚举、每候选/模块完成和预算保护点调用 `audit_checkpoint_agent_run`
+    b. Resume 先调用 `audit_get_agent_resume_context`，禁止重复 FILES_READ/GREP_DONE/已关闭 candidate
+    c. 中断先 checkpoint 再 `audit_finish_agent_run(status=INTERRUPTED)`；完成调用 `audit_finish_agent_run(status=COMPLETED)`
 10. ★ 截断防御:
     a. 输出以 === HEADER START === 开头
     b. HEADER ≤400 字 + TRANSFER BLOCK ≤400 字
@@ -213,7 +225,8 @@ DB_WRITE: {ok|failed(reason)}
    UNCHECKED_CANDIDATES: {file:line|candidate_kind|rule_id|OPEN/TIMEOUT|next_step} ← R2 优先清空
    FILES_READ: {file:conclusion} ← 不再重读
    GREP_DONE: {pattern} ← 不再重复
-9. 增量规则: 只审计 GAPS + UNCHECKED_CANDIDATES。CLEAN 不搜索。FILES_READ 不重读，除非该文件包含待清空 candidate 且必须补上下文。
+   AGENT_RUN/CHECKPOINT: {agent_run_id, checkpoint_seq, runtime_handle?, current_phase, search_cursor, remaining_work, active_trace}
+9. 增量规则: 先调用 `audit_get_agent_resume_context`。只审计 GAPS + UNCHECKED_CANDIDATES + remaining_work。CLEAN 不搜索。FILES_READ 不重读，GREP_DONE 不重复，已关闭 candidate 不重新分析。
 10. 收敛规则: R2+ 禁止输出新的候选类别；必须把收到的 UNCHECKED_CANDIDATES 分类为最终状态，无法完成则保留 TIMEOUT 并写入 UNFINISHED。
 11. ★ 截断防御: 同 R1 #10。
 ---End Contract---

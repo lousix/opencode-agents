@@ -87,21 +87,28 @@ feature intent
   -> exploitability and severity
 ```
 
-D1-D10 在该模式下只用于审后 coverage self-check 和报告分类。
+D1-D10 在该模式下仍由各自独立 Agent 执行增量范围检查；主 Agent 的 autonomous discovery 作为额外的功能建模与交叉验证层。
+
+进入 discovery 前仍须为 D1-D10 预注册 durable run；最终报告前，十个维度都必须由对应独立 Agent 在增量范围内执行，或以带证据原因的 `NOT_APPLICABLE/SKIPPED` 结束。`autonomous` 只表示主 Agent 额外负责功能建模，不豁免 D Agent。
 
 ### `agents`
 
-结构化并行审计。调度器根据 `[FEATURE_SECURITY_PROFILE]` 启动相关专业 Agent:
+结构化并行审计。D1-D10 全部进入调度队列；`[FEATURE_SECURITY_PROFILE]` 只决定优先级和适用性证据，不得用于静默跳过 Agent:
 
 | 风险信号 | Agent |
 |----------|-------|
 | injection / query / template / expression | `audit-d1-injection` |
-| auth / permission / ownership / workflow | `audit-d2d3d9-control` |
-| deserialization / RCE / script engine | `audit-d4-rce` |
-| file / archive / download / outbound URL | `audit-d5d6-file-ssrf` |
-| crypto / config / dependency / CI | `audit-d7d8d10-config` |
+| login / token / session / whitelist | `audit-d2-authentication` |
+| permission / role / ownership / IDOR | `audit-d3-authorization` |
+| deserialization / memory / unsafe / FFI | `audit-d4-unsafe-runtime` |
+| file / archive / upload / download | `audit-d5-file-operations` |
+| outbound URL / webhook / proxy / JDBC URL | `audit-d6-ssrf` |
+| crypto / key / random / certificate | `audit-d7-cryptography` |
+| debug / CORS / cookie / log / exposure | `audit-d8-security-config` |
+| workflow / amount / race / state / mass assignment | `audit-d9-business-logic` |
+| dependency / lockfile / registry / CI | `audit-d10-supply-chain` |
 
-每个 Agent 必须只审 `[FEATURE_PROFILE] + [DIFF_SCOPE] + [RELEVANT_SUPPORTING_FILES]`，不得扩散为全仓库审计。
+每个 Agent 必须启动并只审 `[FEATURE_PROFILE] + [DIFF_SCOPE] + [RELEVANT_SUPPORTING_FILES]`。没有相关攻击面时写 `NOT_APPLICABLE(reason+evidence)`，不得扩散为全仓库审计。
 
 ### `hybrid`
 
@@ -299,12 +306,12 @@ graph_priority
 最终报告必须优先使用现有 DB-backed 报告链路:
 
 ```text
-audit_get_findings_for_verification(session_id)
-audit_update_finding_after_verification(...)
-audit_generate_report(session_id, output_dir={scan_dir}, allow_unverified=false)
+audit_list_findings_for_detail(session_id, include_terminal=false)
+对每个 finding_id 单独 dispatch @audit-verification
+audit_generate_report_index(session_id, output_dir={scan_dir}, allow_unverified=false)
 ```
 
-`audit_generate_report` 生成的 Markdown/HTML 是 canonical final report。不得因为这是 Git 增量审计就绕过既有 verification、sink-chain、deduplication、severity calibration 和 report generation 工具。
+每个确认漏洞的中文 Markdown 是 canonical finding report；`index.md` 合并全部确认漏洞正文，`index.html` 是轻量管理索引。不得因为这是 Git 增量审计就绕过逐项 verification、sink-chain、deduplication、severity calibration、修复方案和断点续跑工具。
 
 `references/core/git_diff_report_template.md` 只用于 feature-scoped 补充报告，保存到:
 
@@ -321,4 +328,4 @@ audit_generate_report(session_id, output_dir={scan_dir}, allow_unverified=false)
 - Final Findings
 - No findings reason (若无漏洞)
 
-只有当 `audit_generate_report` 不可用或失败时，才允许把 feature template 作为 fallback final report，并必须记录 `audit_generate_report_unavailable`。
+报告工具不可用或失败时，feature template 只能作为标明限制的补充材料，不能冒充已逐漏洞核验的正式报告；必须记录 `audit_generate_report_unavailable`。

@@ -1,3 +1,6 @@
 .codegraph/
 .code-review-graph/
 outputs/
+Git-Diff-Preparation-Verification.md
+references/core/run_git_diff_preparation_range.sh
+.understand-anything/

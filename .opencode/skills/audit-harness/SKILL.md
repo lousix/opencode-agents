@@ -10,7 +10,7 @@ description: "OpenCode-native audit harness protocol for target-project context 
 ## Core Principle
 
 ```
-零配置可运行；上下文越多，审计越准；AI 先自主 Recon，再向用户补问。
+零配置、无人值守运行；AI 自主 Recon，并用代码证据和安全默认值闭合上下文缺口，不向用户补问。
 
 用户上下文用于激活扩展、理解暴露面和校准严重度。
 漏洞成立证据仍必须来自实际 Read 过的代码。
@@ -41,7 +41,7 @@ description: "OpenCode-native audit harness protocol for target-project context 
 - Spring Boot
 - MyBatis
 - Vue
-- Internal framework: Jalor
+- Internal framework: InternalFrameworkX
 
 ## Exposure
 - /openapi/**: public internet
@@ -49,9 +49,9 @@ description: "OpenCode-native audit harness protocol for target-project context 
 - /job/**: scheduler only, no direct HTTP exposure
 
 ## Internal Framework
-- @JalorOperation 表示接口操作权限声明
-- 非 GET 接口必须有 @ServiceAudit
-- @ServiceAudit.message 中参数必须匹配方法签名
+- @OperationGuard 表示接口操作权限声明
+- 修改类接口必须有业务审计注解
+- 审计消息中的参数必须匹配方法签名
 
 ## Auth
 - public API 经过 API Gateway JWT 校验
@@ -75,11 +75,11 @@ Recon 阶段按以下顺序执行:
 4. 生成 `[HARNESS_PROFILE]`。
 5. 激活扩展 Skill:
    - 不要在目标项目的 `.opencode/skills` 下 Glob；目标项目只提供 `audit-context.md`。
-   - 先根据代码信号、用户输入、`audit-context.md` 和扩展 `Aliases` 归一化得到候选扩展名，例如 `Jalor框架` → `audit-ext-jalor`。
+   - 先根据代码信号、用户输入、`audit-context.md` 和扩展 `Aliases` 归一化得到候选扩展名，例如 `InternalFrameworkX` → `audit-ext-internal-framework-x`。
    - 对候选扩展优先调用 `skill({ name: "{extension}" })`；失败时才尝试读取审计框架自身的 `.opencode/skills/{extension}/SKILL.md`。
    - 只有在确认当前工作区存在审计框架 `.opencode/skills` 目录时，才可枚举 `audit-ext-*` / `audit-vuln-*`；目录不存在时记录 `extension_discovery=skipped(no_framework_skill_dir)`，不得把它当作错误。
 6. 生成 `[ACTIVE_EXTENSIONS]` 和 `[CONTEXT_GAPS]`。
-7. 仅当缺失信息会影响暴露面、严重度、Agent 分配或内部框架语义时，才向用户追问。
+7. 缺失信息影响暴露面、严重度、Agent 分配或内部框架语义时，不向用户追问：优先从代码、配置、版本历史和 `audit-context.md` 推断；仍无法确定则采用最保守结论、降低置信度并记录证据缺口。
 
 ### Conflict Rule
 
@@ -127,7 +127,7 @@ context_confidence:
 
 ```text
 [CONTEXT_GAPS]
-1. {缺失信息} | impact={exposure|severity|agent-split|internal-semantics} | ask_user={yes|no}
+1. {缺失信息} | impact={exposure|severity|agent-split|internal-semantics} | resolution={code_inference|audit_context|conservative_default|unknown_recorded} | confidence={high|medium|low}
 ```
 
 ---
@@ -142,7 +142,7 @@ context_confidence:
 ```
 
 不要把特殊场景规则直接写入通用 agent、通用 checklist 或通用 language reference。
-不要要求目标项目创建 `.opencode/skills` 目录；目标项目侧的人工输入只放 `audit-context.md`。
+不要要求目标项目创建 `.opencode/skills` 目录；若目标项目已提供上下文，只从 `audit-context.md` 读取；缺失时自主继续，不请求补充。
 
 ---
 
@@ -175,7 +175,7 @@ description: "Internal framework or scenario audit extension."
 type: framework | scenario | internal | vulnerability
 languages: Java, JavaScript
 dimensions: D2, D3, D9
-agents: audit-recon, audit-d2d3d9-control, audit-report, audit-verification
+agents: audit-recon, audit-d2-authentication, audit-d3-authorization, audit-d9-business-logic, audit-report, audit-verification
 priority: 80
 
 ## Aliases

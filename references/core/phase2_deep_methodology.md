@@ -172,7 +172,7 @@ Step 7: 统计与输出
    - 密钥在配置文件明文存储且无环境变量/Vault引用 → **Medium**
 
 > **适用模式**: standard 模式检查项 1-3（核心加密缺陷），deep 模式全量 1-5。
-> **Agent 分配**: D7 通常与 D8+D10 合并在同一 Agent（三者均为配置/环境层审计）。
+> **Agent 分配**: D7 由独立 `audit-d7-cryptography` Agent 执行；D8 与 D10 分别由各自 Agent 执行，不得合并。
 
 ---
 
@@ -180,6 +180,7 @@ Step 7: 统计与输出
 
 | Agent 类型 | 必须加载 | 按需加载 |
 |-----------|---------|---------|
-| D3+D9 Agent (control-driven) | **Phase 2.5 + Phase 2.6 全文** | — |
-| D7+D8+D10 Agent (config-driven) | — | Phase 2.7（D7 深度审计时） |
-| D1/D4/D5/D6 Agent (sink-driven) | — | 无需本文件 |
+| D3 Agent (control-driven) | **Phase 2.5 授权部分** | — |
+| D9 Agent (control-driven) | **Phase 2.6 业务逻辑部分** | — |
+| D7 Agent (config-driven) | — | Phase 2.7（D7 深度审计时） |
+| D1/D4/D5/D6 独立 Agent | — | 无需本文件 |

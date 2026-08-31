@@ -17,21 +17,19 @@ description: "Two-layer checklist architecture with D1-D10 security coverage mat
 | D1 | 注入 | 用户输入是否能到达 SQL/Cmd/LDAP/SSTI/SpEL 执行点？ | [ ] | |
 | D2 | 认证 | Token/Session 生成、验证、过期是否完整？密钥是否安全？ | [ ] | |
 | D3 | 授权 | 每个敏感操作是否验证用户归属？CRUD 权限是否一致？ | [ ] | |
-| D4 | 反序列化 | 是否存在不受信数据的反序列化？Gadget 链是否可达？ | [ ] | |
+| D4 | Unsafe Runtime/内存安全 | 是否存在不可信反序列化、Gadget、越界/UAF/Unsafe/FFI 生命周期风险？ | [ ] | |
 | D5 | 文件操作 | 上传/下载/读取路径是否可控？是否有路径遍历？ | [ ] | |
 | D6 | SSRF | 服务端 HTTP 请求的 URL 是否用户可控？协议是否限制？ | [ ] | |
 | D7 | 加密 | 硬编码密钥/IV？ECB/CBC-no-MAC？弱KDF？RSA-PKCS1v1.5？证书校验绕过？ | [ ] | |
 | D8 | 配置 | 调试接口(Actuator/pprof)是否暴露？CORS 是否过宽？错误堆栈是否泄露？ | [ ] | |
-| D9 | 业务逻辑 | 竞态条件？支付金额可篡改？流程可跳过？Mass Assignment？IDOR/水平越权？CRUD 权限注解完整性？数据导出范围？ | [ ] | |
+| D9 | 业务逻辑 | 竞态条件？支付金额可篡改？流程可跳过？Mass Assignment？状态/配额/幂等不变量是否完整？ | [ ] | |
 | D10 | 供应链 | 依赖是否有已知 CVE？版本是否在安全范围？ | [ ] | |
 
 ### 使用规则
 
 - **未覆盖维度** → 加载 `references/checklists/{language}.md` 中对应 `## D{N}` 段落的语义提示，补充审计
-- **Critical 维度** (D1-D6) 必须全部覆盖
-- **High 维度** (D7-D8) 强烈建议覆盖
-- **High 维度** (D9) 有后台管理/多角色/多租户/支付逻辑的项目必查
-- **Medium 维度** (D10) 按项目类型可选（有外部依赖则 D10 必查）
+- D1-D10 十个独立 Agent 默认全部启动；风险权重只影响先后和深度
+- 无适用攻击面必须由对应 Agent 保存 `NOT_APPLICABLE + reason + checkpoint`，不得静默跳过
 
 ---
 
@@ -66,13 +64,15 @@ description: "Two-layer checklist architecture with D1-D10 security coverage mat
 
 ## 覆盖标准（按审计策略分轨）
 
-### Sink-driven 维度 (D1/D4/D5/D6)
+### Sink-driven 维度 (D1/D4反序列化/D5/D6)
 - ✅已覆盖 = 核心 Sink 类别均被搜索 + `CANDIDATE_LEDGER(candidate_kind=SINK)` 完整 + `candidate_triage=100%` + `unchecked=0` + Critical/High 候选 `high_path=100%`
 - ⚠️浅覆盖 = 搜索过但 Sink 类别有遗漏 / 仅 Grep 未追踪 / 缺少 SINK candidates / `candidate_triage<100%` / `unchecked>0` / Critical/High Sink 链不完整
 - ❌未覆盖 = 未被任何 Agent 搜索
 
-### Control-driven 维度 (D3/D9)
-- ✅已覆盖 = 端点审计率 ≥ 50%(deep)/30%(standard) + ≥3种资源类型CRUD对比 + IDOR覆盖 + `CANDIDATE_LEDGER(candidate_kind=CONTROL)` 完整 + `unchecked=0`
+### Control-driven 维度 (D2认证缺失/D3/D9)
+- D2 ✅已覆盖 = 登录/Token/Session/匿名入口与认证链已验证 + CONTROL/CONFIG ledger 完整 + `unchecked=0`
+- D3 ✅已覆盖 = 端点审计率 ≥ 50%(deep)/30%(standard) + ≥3种资源类型 CRUD/ownership/tenant 对比 + IDOR覆盖 + CONTROL ledger 完整 + `unchecked=0`
+- D9 ✅已覆盖 = 关键业务操作/状态/数值/并发不变量已枚举 + CONTROL ledger 完整 + `unchecked=0`
 - ⚠️浅覆盖 = 仅 Grep pattern 未系统枚举 / 缺少 CONTROL candidates / `unchecked>0`
 - ❌未覆盖 = 未执行 Control-driven 审计
 
@@ -87,8 +87,18 @@ description: "Two-layer checklist architecture with D1-D10 security coverage mat
 - ⚠️浅覆盖 = 仅检查了部分配置 / 缺少 CONFIG candidates / `unchecked>0`
 - ❌未覆盖 = 未检查
 
+### Memory-driven 维度 (D4)
+- ✅已覆盖 = 已枚举适用的 allocation/bounds/ownership/free/use 与 Unsafe/FFI 类别 + `CANDIDATE_LEDGER(candidate_kind=MEMORY)` 完整 + `unchecked=0`
+- ⚠️浅覆盖 = 只搜索危险 API、未验证生命周期/边界/可达性，或存在 MEMORY OPEN/TIMEOUT
+- N/A = D4 Agent 启动后确认无反序列化、native、unsafe、FFI 攻击面，并将证据写入 agent run/checkpoint
+
 ### T3 Sink 覆盖验证
 对每个标记 ✅ 的维度，优先检查 `audit_get_candidate_coverage` / `audit_get_unchecked_candidates`。如类别遗漏、候选未入库或仍有 OPEN/TIMEOUT → 降级 ⚠️。
 
 ### 强制覆盖
 D1(注入) + D2(认证) + D3(授权) 必须覆盖，否则不可进入 REPORT。
+
+### Agent Run 完整性
+- 每轮必须通过 `audit_list_agent_runs` 得到 D1-D10 十条独立记录。
+- `QUEUED/RUNNING/RESUMING/INTERRUPTED` 均阻断轮次结束；`NOT_APPLICABLE` 必须有 `status_reason/skip_code` 和适用性 checkpoint。
+- 调度失败、用户排除或注册缺失必须显示原因，禁止把“没有结果”当作已覆盖。

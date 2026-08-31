@@ -9,6 +9,7 @@ tools:
   skill: true
 permission:
   "*": allow
+  question: deny
   read: allow
   grep: allow
   write: allow
@@ -16,7 +17,7 @@ permission:
   list: allow
   lsp: allow
   edit: allow
-  webfetch: ask
+  webfetch: allow
   bash: allow
   skill:
     "*": allow
@@ -47,7 +48,7 @@ Phase 1 是审计的基础。本 Agent 负责完成以下全部产出，后续�
 **核心产出（门控条件，全部满足才可进入下一状态）**:
 - □ Harness Profile（语言画像、技术栈画像、场景画像、内部知识状态）
 - □ Active Extensions（已激活扩展 Skill、激活原因、适用 Agent/维度）
-- □ Context Gaps（AI 自主探索后仍需人工补充的信息）
+- □ Context Gaps（AI 自主探索后仍未确定的信息；不等待用户补充）
 - □ 核心代码目录列表（写入 Agent Contract 的 [搜索路径]）
 - □ 排除目录列表（frontend, test, build, node_modules 等）
 - □ 攻击面地图（五层推导结果，标注各 D1-D10 维度激活状态）
@@ -130,7 +131,7 @@ Phase 1 是审计的基础。本 Agent 负责完成以下全部产出，后续�
 T1 架构模式: 单体/微服务/Serverless/桌面 → 信任边界在哪
 T2 业务领域: 金融/医疗/IoT/SaaS → 关键逻辑漏洞方向
 T3 框架语言: LLM 已有知识推导 Sink 模式（非 checklist）
-T4 部署环境: Dockerfile/k8s/terraform → 运行时攻击面
+T4 部署环境: k8s/terraform/服务配置 → 运行时攻击面（Docker 内容排除）
 T5 功能发现: Grep 快速探测 + 结构推理 → 激活 D1-D10 维度
 
 驱动源: T1-T4 = 项目结构+LLM推理（零额外成本）
@@ -155,7 +156,7 @@ T5 功能发现: Grep 快速探测 + 结构推理 → 激活 D1-D10 维度
 | **1.8** | **枚举部署模式/Profile** | **各 Profile 的安全控制差异（Filter 启用/禁用、端点暴露/隐藏）** |
 
 > **步骤 1.8 部署模式感知**:
-> 搜索 `application-*.yml` / `application-*.properties` / `profiles/` / Dockerfile 变体，
+> 搜索 `application-*.yml` / `application-*.properties` / `profiles/` 等非 Docker 配置，
 > 识别不同部署模式（standalone/desktop/enterprise/cloud 等）的安全差异。
 > 每个模式的差异点：哪些 Filter/Middleware 启用或禁用？哪些端点在该模式下暴露？
 > 如果某 Profile 禁用了关键安全 Filter → 该模式下的端点必须在后续审计中单独分析。
@@ -197,7 +198,7 @@ T5 功能发现: Grep 快速探测 + 结构推理 → 激活 D1-D10 维度
 基于 Step 1.4 路由发现 + Step 1.5 Filter/中间件链，生成:
 {端点路径, HTTP方法, 认证要求, 权限注解, 资源归属校验, 方法参数名, 暴露模式, 扩展字段(extension_field_map)}
 
-此矩阵是 D3+D9 Agent 的输入，等同于 Sink 列表之于 D1。
+此矩阵同时提供给独立的 D3 与 D9 Agent：D3 消费权限/资源归属字段，D9 消费业务操作/状态字段；不得合并为一个 Agent。
 生成方法: Grep @RequestMapping/@GetMapping 等 → 提取路径 → 对每个 Controller 检查类/方法级权限注解 → 记录到矩阵。
 无后台管理的纯 API 项目: 矩阵仍需生成（覆盖 IDOR 检查）。
 
@@ -208,10 +209,8 @@ T5 功能发现: Grep 快速探测 + 结构推理 → 激活 D1-D10 维度
 执行要求:
 - 读取扩展 Skill 的 `Recon Additions` 与 `Agent Contract Additions`
 - 将扩展字段放入 `extension_field_map`，不要写死到通用矩阵结构
-- 输出每个扩展的覆盖摘要，例如 `{audit-ext-jalor: endpoints=N, checked=M, gaps=K}`
+- 输出每个扩展的覆盖摘要，例如 `{audit-ext-example: endpoints=N, checked=M, gaps=K}`
 - 未识别到扩展字段时，保留通用矩阵，不得猜测内部框架语义
-
-示例: 若激活 `audit-ext-jalor`，Jalor 接口权限与审计日志字段由 `.opencode/skills/audit-ext-jalor/SKILL.md` 定义，本文件只负责承载其矩阵字段与覆盖摘要。
 
 ---
 
@@ -278,7 +277,7 @@ IoT/嵌入式: D7(++), D2(++), D5(+), D10(+)
 skills: {skill_name, activation_reason, applies_to_agents, applies_to_dimensions, references_loaded}
 
 [CONTEXT_GAPS]
-待人工补充: {language_uncertainty, internal_frameworks, deployment_exposure, business_rules, vuln_focus}
+未决上下文（不等待用户输入）: {language_uncertainty, internal_frameworks, deployment_exposure, business_rules, vuln_focus；附当前推断与置信度}
 
 [RECON]
 项目规模: {X files, Y directories}

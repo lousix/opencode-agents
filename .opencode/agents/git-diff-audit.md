@@ -9,6 +9,7 @@ tools:
   skill: true
 permission:
   "*": allow
+  question: deny
   read: allow
   grep: allow
   write: allow
@@ -16,7 +17,7 @@ permission:
   list: allow
   lsp: allow
   edit: allow
-  webfetch: ask
+  webfetch: allow
   bash: allow
   task:
     "*": allow
@@ -235,16 +236,17 @@ Feature security properties 至少考虑:
 ```
 
 要求:
+- 启动 discovery 前为 D1-D10 调用 `audit_start_agent_run(status="QUEUED")`，主线建模完成后将同一增量范围交给十个对应 D Agent；无适用攻击面由 Agent 写 `NOT_APPLICABLE`。
 - 若 `[GRAPH_REVIEW_QUEUE]` 非空，先按 priority 读取队列项，不能只把图结果写进报告
 - 对 `changed_symbol` 逐个追踪 caller -> changed control/code -> callee/sink
 - 对 `caller_entrypoint` 确认是否跨过用户输入、权限、租户、文件、网络或 LLM trust boundary
 - 对 `callee_or_sink` 优先检查共享 HTTP 客户端、文件 helper、SQL/查询、缓存清理、动态执行、鉴权/验签 helper
 - 对 `impact_file` 只在调用链仍和功能相关时扩展阅读，并记录扩展原因
-- 图队列完成后，再覆盖图数据未覆盖的 changed files、配置、Docker、CI、文档和非代码资源
+- 图队列完成后，再覆盖图数据未覆盖的 changed files、非 Docker 配置、CI、文档和非代码资源；Docker 内容始终排除
 - 每个 changed source-like file 必须写 `work_ledger.md` receipt
-- 每个候选必须进入 `audit_save_candidates`
+- 每个候选必须由对应 D Agent 通过 `audit_upsert_candidates(agent_run_id=...)` 增量入库
 - 高危候选必须补齐真实 source/control/sink 或明确降级
-- D1-D10 只用于最终 coverage self-check
+- D1-D10 各自完成增量范围检查，并用于最终 coverage self-check
 - 若 `[GRAPH_CONTEXT_PROFILE]` 有 supporting files，优先读取这些文件验证调用方、被调方、影响流和测试缺口；但 supporting file 只有被真实读取后才能进入 finding 证据
 
 #### `engine=agents`
@@ -268,14 +270,19 @@ Agent 不得做全仓库扫描。Agent 发现必须绑定功能语义和 changed
 
 #### `engine=hybrid`
 
-先执行 autonomous discovery，遇到高风险簇再派 Agent:
+先执行 autonomous discovery，再将 D1-D10 全部放入调度队列；下列信号仅用于优先级和上下文注入，Agent 无适用攻击面时自行记录 NOT_APPLICABLE:
 
 ```text
 dynamic SQL/query/template -> audit-d1-injection
-auth/authz/workflow/tenant -> audit-d2d3d9-control
-deserialization/RCE/script -> audit-d4-rce
-file/archive/SSRF -> audit-d5d6-file-ssrf
-crypto/config/dependency/CI -> audit-d7d8d10-config
+login/token/session/whitelist -> audit-d2-authentication
+permission/role/ownership/IDOR -> audit-d3-authorization
+deserialization/memory/unsafe/FFI -> audit-d4-unsafe-runtime
+file/archive/upload/download -> audit-d5-file-operations
+outbound URL/webhook/proxy/JDBC URL -> audit-d6-ssrf
+crypto/key/random/certificate -> audit-d7-cryptography
+debug/CORS/cookie/log/exposure -> audit-d8-security-config
+workflow/amount/race/state/mass assignment -> audit-d9-business-logic
+dependency/lockfile/registry/CI -> audit-d10-supply-chain
 ```
 
 ### Step 6: Validation And Binding Gates
@@ -306,7 +313,7 @@ Critical/High 必须有 TRUE_SOURCE 或高置信 broken control；仅 sink 命�
 
 ### Step 8: Final Report
 
-必须优先复用现有报告链路，不得绕过 `audit-report` / `audit_generate_report`。
+必须优先复用现有报告链路，不得绕过 `audit-report` / `audit_generate_report_index`。
 
 主路径:
 
@@ -322,12 +329,12 @@ dispatch @audit-report with:
 `@audit-report` 必须执行既有报告前门禁:
 
 ```text
-audit_get_findings_for_verification(session_id)
-audit_update_finding_after_verification(...)
-audit_generate_report(session_id, output_dir={scan_dir}, allow_unverified=false)
+audit_list_findings_for_detail(session_id, include_terminal=false)
+对每个 finding_id 单独 dispatch @audit-verification
+audit_generate_report_index(session_id, output_dir={scan_dir}, allow_unverified=false)
 ```
 
-`audit_generate_report` 生成的 Markdown/HTML 是 canonical final report。增量审计不得自行跳过 verification、sink-chain、severity calibration、deduplication 和 report DB 读取逻辑。
+每个确认漏洞的中文 Markdown 是 canonical finding report；`index.md` 合并全部确认漏洞正文，`index.html` 是轻量管理索引。增量审计不得自行跳过逐项 verification、sink-chain、severity calibration、修复方案、断点续跑和 report DB 读取逻辑。
 
 同时，使用 `references/core/git_diff_report_template.md` 生成 feature-scoped 补充报告，保存:
 
@@ -344,11 +351,11 @@ audit_generate_report(session_id, output_dir={scan_dir}, allow_unverified=false)
 - Candidate Coverage And Known Gaps
 - Findings
 - Positive Security Notes
-- Open Questions And Follow-Up
+- Unresolved Evidence Gaps（不要求用户答复，不阻塞既定范围内的审计）
 
-若 `audit_generate_report` 工具不可用或调用失败，才 fallback 到 `references/core/git_diff_report_template.md` 并把 `{scan_dir}/feature_review.md` 复制/另存为 `{scan_dir}/report.md`，同时在 `[CONTEXT_GAPS]` 记录 `audit_generate_report_unavailable`。
+若报告工具不可用或调用失败，只能生成标明“报告链路未完成”的 feature 补充报告；不得用自由生成内容冒充已逐项核验的正式漏洞报告，并在 `[CONTEXT_GAPS]` 记录 `audit_generate_report_unavailable`。
 
-无漏洞也必须走 `audit_generate_report` 或明确 fallback，说明为什么没有 finding surviving feature-binding 和 validation gates。
+无漏洞也必须走 `audit_generate_report_index` 或明确记录报告工具不可用，说明为什么没有 finding 通过功能绑定和核验门禁。
 
 ## 5. Hard Rules
 
@@ -361,7 +368,7 @@ audit_generate_report(session_id, output_dir={scan_dir}, allow_unverified=false)
 - 不得宣称覆盖完成，除非 `deep_review_input.csv` 每行都有 `work_ledger.md` receipt。
 - 不得写中间 JSONL candidate ledger；candidate 走现有 DB 或对话摘要。
 - 不得把 graph risk score 当作安全严重度；它只能影响审计优先级。
-- 不得绕过既有 `audit_generate_report` 报告链路；增量模板只能作为 feature 补充或 fallback。
+- 不得绕过逐漏洞核验与 `audit_generate_report_index` 链路；增量模板只能作为 feature 补充材料。
 
 ## 6. Output Skeleton
 
@@ -378,7 +385,8 @@ audit_generate_report(session_id, output_dir={scan_dir}, allow_unverified=false)
 最终输出:
 
 ```text
-[REPORT] audit_generate_report markdown/html paths
+[REPORT_INDEX] index.md/index.html paths
+[FINDING_REPORTS] confirmed finding Markdown paths
 [FEATURE_REVIEW] {scan_dir}/feature_review.md
 [SUMMARY] findings={N}, critical={N}, high={N}, medium={N}, low={N}, gaps={N}
 ```

@@ -25,6 +25,24 @@ PoC 是漏洞验证的关键环节，一个有效的 PoC 能够：
 
 ---
 
+## 报告内嵌契约（强制）
+
+PoC 不生成独立文件或目录，完整材料直接进入对应的单漏洞中文 Markdown。每个 finding 必须选择一种验证类型：
+
+| 类型 | 必须提供 | 结论边界 |
+|------|----------|----------|
+| `EXECUTABLE_POC` | 完整源码、运行命令、预期结果、负向对照、安全说明 | 只有实际运行并保存输出后才能写“已执行” |
+| `STATIC_REPRO` | 可执行静态核验命令、预期结果、负向对照 | 只能证明静态事实，不得写成漏洞已动态触发 |
+| `REGRESSION_TEST` | 完整测试源码、执行命令、漏洞版本失败条件、修复后通过条件 | 区分已运行测试和仅审阅测试 |
+| `MANUAL_ONLY` | 编号操作步骤、无法自动化的原因和证据限制 | 不支撑“已验证且可实际利用” |
+| `NOT_REPRODUCED` | 未复现原因、已检查内容和剩余证据缺口 | 不得提供虚构运行输出 |
+
+执行状态固定为 `NOT_RUN`、`SYNTAX_CHECKED`、`BUILT`、`EXECUTED`、`FAILED` 或 `BLOCKED`。预期结果和实际记录必须分栏：未运行时只写预期结果；`EXECUTED/FAILED` 必须附真实捕获输出。
+
+报告中的源码使用真实语言围栏（如 `c`、`cpp`、`python`），命令使用 `bash`，日志使用 `console`。禁止用 `text` 围栏包裹注释、伪代码或调用描述来冒充 PoC；禁止本机绝对路径、占位符和无法复制的省略号。C/C++ 内存安全问题使用 ASAN、UBSAN 或 Valgrind，并提供正向触发与负向对照。当前项目不使用 Docker 构建或验证 PoC。
+
+---
+
 ## PoC 分类与模板
 
 ### 1. SQL 注入 PoC
@@ -555,47 +573,50 @@ def verify_ssti(url, param, engine="jinja2"):
 | XSS | 使用 `alert(1)` | 避免窃取真实Cookie |
 | 反序列化 | 使用 URLDNS 探测 | 避免直接RCE |
 
-### 验证结果记录模板
+### 报告内验证结果模板
 
-```markdown
-## PoC 验证报告
+````markdown
+## 六、安全核验与 PoC
 
-### 基本信息
-- 漏洞类型: [SQL注入/命令注入/SSRF/...]
-- 目标URL: https://target.com/api/query
-- 参数: id
-- 验证时间: 2026-01-23 10:30:00
+### 6.1 验证类型与证据状态
 
-### 验证过程
+| 项目 | 结论 |
+|------|------|
+| 验证类型 | 可执行 PoC / 静态复现 / 回归测试 / 仅手工验证 / 未复现 |
+| 执行状态 | 未执行 / 已语法检查 / 已构建 / 已执行 / 执行失败 / 受阻 |
 
-**Step 1: 基础探测**
-```
-Request:
-GET /api/query?id=1' HTTP/1.1
-Host: target.com
+### 6.2 前置准备
 
-Response:
-HTTP/1.1 500 Internal Server Error
-{"error": "SQL syntax error..."}
+```bash
+# 只写已经确认可用的仓库相对命令
 ```
 
-**Step 2: 确认注入**
-```
-Request:
-GET /api/query?id=1' AND SLEEP(5)-- HTTP/1.1
+### 6.3 PoC / 测试源代码
 
-Response:
-(响应延迟 5.2 秒)
+```python
+# 必须是完整可执行代码，不得使用占位符或伪代码
 ```
 
-### 验证结论
-- 状态: [已确认] / [需人工验证] / [误报]
-- 置信度: [高] / [中] / [低]
-- 影响评估: 可获取数据库完整内容
+### 6.4 构建与运行命令
 
-### 修复建议
-使用参数化查询替代字符串拼接
+```bash
+# 完整构建命令
+# 完整运行命令
 ```
+
+### 6.5 预期结果与实际记录
+
+- 预期结果：说明触发后应该看到什么。
+- 实际记录：只有真实运行后才粘贴 `console` 输出；未运行时明确写“未执行”。
+
+### 6.6 负向对照
+
+给出不会触发漏洞的输入/命令及其预期结果，以排除普通错误、环境失败或测试夹具自身造成的现象。
+
+### 6.7 清理与限制
+
+给出清理命令、授权边界、没有执行的原因和仍未确认的问题。
+````
 
 ---
 
@@ -619,27 +640,6 @@ Burp Collaborator # Burp内置回调服务
 interactsh        # 开源回调服务
 dnslog.cn         # DNS回调服务
 ```
-
-### Docker 隔离环境
-
-```yaml
-# docker-compose.yml - 安全的PoC测试环境
-version: '3'
-services:
-  poc-runner:
-    image: python:3.11-slim
-    volumes:
-      - ./pocs:/app
-    network_mode: "none"  # 禁用网络
-    mem_limit: 512m
-    cpus: 1.0
-    read_only: true
-    user: "1000:1000"
-    working_dir: /app
-    command: python poc.py
-```
-
----
 
 ## 置信度评分
 

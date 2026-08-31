@@ -9,7 +9,7 @@ description: "Pre-report finding verification contract. Re-checks whether each v
 
 ## 触发条件
 
-当 `audit-report` dispatch `@audit-verification` 并要求 `[VERIFY_FINDING]`、`报告前复核` 时加载本 skill。漏洞挖掘 agent 不应执行常规报告前复核。
+当 `audit-report` 对一个 `finding_id` 单独 dispatch `@audit-verification` 并要求 `[FINDING_DETAIL]`、`报告前复核` 时加载本 skill。漏洞挖掘 agent 不应执行常规报告前复核。
 
 ## 复核目标
 
@@ -34,7 +34,7 @@ description: "Pre-report finding verification contract. Re-checks whether each v
 
 1. Read 原始 finding 中的文件和行号，确认代码仍存在。
 2. Read Source 节点代码，确认输入来自真实外部边界。
-3. 沿 Source → Transform → Sanitizer → Sink 逐跳核验，每一跳必须有实际代码。
+3. 沿 Source → Transform → Sanitizer → Sink 逐跳核验，每一跳必须有实际代码和相关函数名称。Source/Sink 至少保存 8 行非空上下文代码，关键中间节点至少 5 行。
 4. 检查净化点是否有效：参数化、白名单、路径规范化、协议限制、权限校验、签名验证等。
 5. 给出攻击者视角的最小利用路径。若无法说明利用路径，不得保持 Critical/High。
 
@@ -92,14 +92,16 @@ audit_update_finding_after_verification(
 写回规则:
 - 若复核找到了更真实的 Source，必须用 `sink_chain_steps` 替换旧链路。
 - `sink_chain_steps` 必须是非空 JSON 数组；每项优先使用固定字段：
-  `{"step_type":"Source|Transform|Sanitizer|Sink","file_path":"...","line_number":42,"code_snippet":"...","notes":"..."}`
+  `{"step_type":"Source|Transform|Sanitizer|Sink","file_path":"...","line_number":42,"function_name":"Class.method","context_start_line":36,"context_end_line":49,"code_snippet":"多行上下文代码","notes":"..."}`
 - 禁止传空数组、空对象或无位置/代码/说明的步骤。若工具返回 `error`、`saved=0` 或 `replaced_steps=0`，必须修正参数重试，不得继续生成最终报告。
-- Critical/High/Medium 至少写回一个 Source 和一个 Sink；Source/Sink 必须有文件行号或真实代码片段。
+- Critical/High/Medium 至少写回一个 Source 和一个 Sink；Source/Sink 必须有精确文件行号、相关函数名、上下文行范围和至少 8 行非空真实代码片段。
 - 若复核补充了攻击者利用方法，必须写入 `attack_vector`。
-- 若复核补充或修正了 PoC，必须写入 `poc`。
+- `findings.poc` 只允许保存原始载荷或发现阶段线索，不能作为“已执行”的证据，也不能直接以 `text` 代码块进入最终报告。完整源码、构建/运行命令、预期/实际结果和负向对照必须写入 `finding_report_details` 的结构化 PoC 字段并内嵌到单漏洞 Markdown。
 - 若发生降级，必须更新 `severity` 和 `confidence`，不只写 `severity_action`。
 - 若判定 `DROP` 或 `FALSE_POSITIVE`，至少将 `confidence` 更新为 `误报/已排除` 或将 `severity` 更新为 `Info`，避免最终报告继续按高危展示。
 
-最终 Markdown/HTML 报告必须依据更新后的 `findings`、`sink_chains`、`finding_verifications` 三类最终数据库结果生成；没有复核结果时只能根据 Sink 链做弱推断，并应标记为需复核。
+确认漏洞的单项报告必须依据更新后的 `findings`、`sink_chains`、`finding_verifications`、`finding_report_details` 四类最终数据库结果生成，并且只输出中文 Markdown。PoC 材料全部在该 Markdown 内展示，不生成独立 PoC 文件或目录。误报只保存 `REJECTED` 状态和中文排除原因，不生成单漏洞修复报告。
+
+每个 finding 都必须建立独立 `finding_detail_run`；发生中断时必须从最新 `finding_detail_checkpoint` 继续，不得重新核验已经闭合的阶段。
 
 报告统计、漏洞编号和详情分组必须使用 `severity_action` 后的报告等级；原始等级只作为属性保留。
