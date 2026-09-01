@@ -255,7 +255,7 @@ State: REPORT → @audit-report 生成中文合并详报与 HTML 索引
       ↓
 
 State: 报告输出要求
-  1. 每个确认漏洞输出到 audit-reports/findings/{vuln_id}-{组件名称}-{中文漏洞名称}.md
+  1. 每个确认漏洞输出到 audit-reports/details/{vuln_id}-{组件名称}-{中文漏洞名称}.md
   2. 单漏洞只允许 Markdown，所有面向产品的自然语言必须为中文
   3. 单漏洞不得重复整体统计、D1-D10 覆盖和其他漏洞内容
   4. audit-reports/index.md 合并全部确认漏洞正文；index.html 保持轻量管理索引

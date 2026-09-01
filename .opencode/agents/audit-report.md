@@ -33,7 +33,7 @@ permission:
 audit-reports/
 ├── index.md                 # 中文合并详报：统计、链接和全部确认漏洞正文
 ├── index.html               # 中文管理索引浏览视图
-└── findings/
+└── details/
     ├── C-0001-job-service-远程命令执行.md       # 编号、组件、漏洞名称
     ├── H-0002-用户中心-用户数据越权读取.md
     └── ...
@@ -69,7 +69,7 @@ audit_list_findings_for_detail(session_id, include_terminal=false)
 你是 @audit-verification，每次只处理一个数据库 finding。
 session_id: {session_id}
 finding_id: {finding_id}
-output_dir: {project_path}/audit-reports/findings
+output_dir: {project_path}/audit-reports/details
 
 必须执行逐漏洞 durable run 协议；若有 checkpoint，从断点继续；
 核验结论和产品报告事实必须落库；确认漏洞只生成中文 Markdown；

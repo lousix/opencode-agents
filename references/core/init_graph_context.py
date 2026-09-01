@@ -27,7 +27,7 @@ from typing import Any
 
 
 DEFAULT_TIMEOUT = int(os.environ.get("AUDIT_GRAPH_INIT_TIMEOUT", "300"))
-EXCLUDE_LINES = [".codegraph/", ".code-review-graph/", "audit-output/"]
+EXCLUDE_LINES = [".codegraph/", ".code-review-graph/", ".audit-work/", "audit-reports/"]
 
 
 def run_cmd(args: list[str], cwd: Path, timeout: int) -> dict[str, Any]:

@@ -18,7 +18,8 @@ Graph indexes are stored in the **target repository**, not in the audit framewor
 <target_repo>/
   .codegraph/
   .code-review-graph/
-  audit-output/
+  .audit-work/
+  audit-reports/
 ```
 
 Before a Git incremental audit, run the preparation script from this audit framework:
@@ -40,7 +41,8 @@ The script writes these entries to the target repository's local `.git/info/excl
 ```text
 .codegraph/
 .code-review-graph/
-audit-output/
+.audit-work/
+audit-reports/
 ```
 
 It never edits the tracked `.gitignore` file. Use `--skip-exclude` when a caller wants to manage ignores separately.
@@ -168,7 +170,7 @@ Queue semantics:
 | `impact_file` | File in CodeGraph impact radius | Read if the feature path remains plausible. |
 | `test_gap` | Changed code with weak/missing tests | Use as validation/counterevidence signal, not vulnerability proof. |
 
-The queue must be consumed before plain `deep_review_input.csv` order. The normal worklist is still required afterward to cover files not represented by graph tools, especially config, Docker, CI, generated patch-only files, docs, and non-code resources.
+The queue must be consumed before plain `deep_review_input.csv` order. The normal worklist is still required afterward to cover files not represented by graph tools, especially non-Docker config, CI, generated patch-only files, docs, and non-code resources. Dockerfile、Compose 与 Docker 目录始终排除。
 
 ## Confidence Levels
 
@@ -189,7 +191,7 @@ The queue must be consumed before plain `deep_review_input.csv` order. The norma
 ## Artifacts
 
 ```text
-<scan_dir>/artifacts/06_graph_context/
+<work_dir>/06_graph_context/
   graph_context.json
   graph_context.md
 ```

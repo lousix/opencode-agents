@@ -36,7 +36,8 @@ python3 references/core/init_graph_context.py --repo "$TARGET" --mode update
 ```text
 .codegraph/
 .code-review-graph/
-audit-output/
+.audit-work/
+audit-reports/
 ```
 
 查看状态：
@@ -73,7 +74,7 @@ Graph 数据不是报告装饰。审计时应先读取 `graph_context.json` 里�
 5. 图上下文 base 请使用 HEAD~10，不要使用 HEAD。
 6. 请优先调用 audit_generate_diff_worklist 和 audit_generate_graph_context。
 7. 生成 graph_context 后，请先按 graph_review_queue 的 priority 阅读和追踪代码，再按 diff 文件列表补齐覆盖。
-8. 最终输出 scan_dir、worklist 覆盖情况、graph_context 状态、最终 findings 和报告路径。
+8. 正式报告使用与 code-audit 相同的 audit-reports 格式；worklist 和 graph_context 只保存到 work_dir。
 
 请从 /Users/lousix/sec/ai4sec/opencode-agents 这个审计框架目录运行，目标 repo_root 是 /path/to/target/repo。
 ```
@@ -134,7 +135,7 @@ opencode run --agent git-diff-audit --format default "
 
 请从这 10 个 commit 的 message、diff 和代码上下文推断功能边界，并做功能级增量安全审计。
 请将 audit_generate_graph_context 的 base 设置为 $GRAPH_BASE，并先按 graph_review_queue 审计 caller/callee/impact，再补齐普通 diff 文件。
-最终输出 scan_dir、worklist 覆盖、graph_context 状态、最终 findings 和报告路径。
+最终输出 audit-reports 正式报告路径；worklist 和 graph_context 状态记录到 .audit-work 下的 work_dir。
 "
 ```
 
@@ -193,22 +194,27 @@ agents      强制多子 Agent 分工，适合需要结构化并行覆盖的场�
 
 ## 产物位置
 
-增量审计报告和中间产物会落在目标项目下：
+增量审计与 Code Audit 使用相同的正式报告格式；Git Diff 特有材料放入独立的可恢复过程目录：
 
 ```text
-<target_project>/audit-output/git-diff-scans/<scan_id>/
-  <audit_generate_report 输出的 Markdown/HTML 报告>
-  feature_review.md
-  report.md                 # 兼容入口；仅在需要时指向/复制 canonical Markdown
-  artifacts/
-    02_worklist/
-      diff_worklist.csv
-      deep_review_input.csv
-      work_ledger.md
-    06_graph_context/
-      graph_context.json
-      graph_context.md
+<target_project>/audit-reports/
+  index.md
+  index.html
+  details/
+    <漏洞编号>-<组件名称>-<中文漏洞名称>.md
+
+<target_project>/.audit-work/git-diff/<scan_id>/
+  feature_review.md          # 过程记录，不属于正式交付报告
+  02_worklist/
+    diff_worklist.csv
+    deep_review_input.csv
+    work_ledger.md
+  06_graph_context/
+    graph_context.json
+    graph_context.md
 ```
+
+单漏洞只输出中文 Markdown；PoC、代码证据、修复方案与回归测试直接写入单漏洞报告。`index.md` 合并全部确认漏洞的完整正文，`index.html` 只保留轻量索引。不会生成 `report.md`、单漏洞 HTML 或 Git Diff 专属正式报告目录。Dockerfile、Compose 与 Docker 目录不进入审计、worklist 或 PoC 验证范围。
 
 对项目 /Users/lousix/Desktop/tmp/code/ascend/MindIE-Motor 做一次功能级增量安全审计。
 这次要审计的是最近 50 个 commit，请你从 commit message、diff 文件、入口点和代码语义中推断这 50 个 commit 实现的功能边界。
@@ -219,6 +225,6 @@ agents      强制多子 Agent 分工，适合需要结构化并行覆盖的场�
 3. 审计单位是功能，不是单独 hunk。
 4. 审计前请使用或检查 CodeGraph / code-review-graph 图上下文。
 5. 请优先调用 audit_generate_diff_worklist 和 audit_generate_graph_context。
-6. 最终输出 scan_dir、worklist 覆盖情况、graph_context 状态、最终 findings 和报告路径。
+6. 最终输出与 code-audit 相同的 audit-reports 正式报告；worklist 与 graph_context 只写入 .audit-work 过程目录。
 
 请从 /Users/lousix/sec/ai4sec/opencode-agents 这个审计框架目录运行，目标 repo_root 是 /Users/lousix/Desktop/tmp/code/ascend/MindIE-Motor

@@ -234,7 +234,15 @@ def add_supporting_file(
     rel = normalize_repo_path(repo, path_value or "")
     if not rel:
         return
-    if rel.startswith(".git/") or rel.startswith("audit-output/"):
+    lowered = rel.lower()
+    if lowered.startswith((".git/", ".audit-work/", "audit-reports/")):
+        return
+    parts = Path(lowered).parts
+    name = Path(lowered).name
+    docker_compose = name.endswith((".yml", ".yaml")) and (
+        name.startswith("docker-compose.") or name.startswith("compose.")
+    )
+    if "docker" in parts or ".docker" in parts or name == "dockerfile" or name.startswith("dockerfile.") or docker_compose:
         return
     entry = files.setdefault(
         rel,

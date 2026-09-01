@@ -2169,7 +2169,7 @@ const auditGenerateFindingReport = tool({
   description: "Render exactly one verified finding as a Chinese Markdown product report. Individual finding HTML is intentionally unsupported.",
   args: {
     finding_id: tool.schema.number().describe("Finding ID"),
-    output_dir: tool.schema.string().optional().describe("Defaults to {project_path}/audit-reports/findings"),
+    output_dir: tool.schema.string().optional().describe("Defaults to {project_path}/audit-reports/details"),
   },
   async execute(args, ctx) {
     const db = getDb();
@@ -2240,7 +2240,7 @@ const auditGenerateFindingReport = tool({
       return JSON.stringify({ error: "chinese_language_gate_failed" });
     }
     const outDir = args.output_dir
-      ?? (project.path ? join(project.path, "audit-reports", "findings") : join(ctx.directory, "audit-reports", "findings"));
+      ?? (project.path ? join(project.path, "audit-reports", "details") : join(ctx.directory, "audit-reports", "details"));
     mkdirSync(outDir, { recursive: true });
     const safeId = vulnerabilityId.replace(/[^A-Za-z0-9_.-]/g, "-");
     const componentSlug = reportTitleFileSlug(details.component_name, 48);

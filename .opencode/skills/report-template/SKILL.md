@@ -9,7 +9,7 @@ description: "Chinese product-facing per-finding security report template with v
 
 ## 输出边界
 
-- 单漏洞文件：`audit-reports/findings/{vuln_id}-{组件名称}-{中文漏洞名称}.md`。编号保证唯一；组件名称最多保留 48 个字符，漏洞名称最多保留 72 个字符，并统一执行路径安全化。
+- 单漏洞文件：`audit-reports/details/{vuln_id}-{组件名称}-{中文漏洞名称}.md`。编号保证唯一；组件名称最多保留 48 个字符，漏洞名称最多保留 72 个字符，并统一执行路径安全化。
 - 单漏洞禁止 HTML。
 - PoC 的源码、命令、输出、负向对照和清理步骤直接写入本报告，不创建独立 PoC 文件或目录。
 - 不使用 Docker 构建或验证 PoC。

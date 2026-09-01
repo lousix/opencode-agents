@@ -86,7 +86,7 @@ test("单漏洞渲染为中文 Markdown 且不生成 HTML", () => {
   const start = plugin.indexOf("const auditGenerateFindingReport");
   const end = plugin.indexOf("const auditFinishFindingDetailRun", start);
   const toolSource = plugin.slice(start, end);
-  assert.match(toolSource, /audit-reports", "findings/);
+  assert.match(toolSource, /audit-reports", "details/);
   assert.match(toolSource, /writeFileSync\(markdownPath, markdown, "utf8"\)/);
   assert.match(toolSource, /html: null/);
   assert.doesNotMatch(toolSource, /writeFileSync\([^\n]*html/i);
@@ -272,7 +272,7 @@ test("index.md 合并每个确认漏洞的完整 Markdown 正文", () => {
     { id: 3, mode: "standard", started_at: "2026-08-31" },
     { name: "示例产品" }, [finding],
     { 7: { severity_action: "KEEP" } }, { 7: { status: "COMPLETED" } },
-    { 7: { markdown_path: "/project/audit-reports/findings/H-0007-user-service-SQL注入.md",
+    { 7: { markdown_path: "/project/audit-reports/details/H-0007-user-service-SQL注入.md",
       markdown_content: "# 【示例产品】【H-0007】用户查询接口存在 SQL 注入\n\n## 三、代码与证据链\n\n真实代码证据。\n\n## 六、安全核验与 PoC\n\n完整验证命令。\n\n## 七、修复方案\n\n参数化查询。" } },
     [], [], "/project/audit-reports",
   );
@@ -281,7 +281,7 @@ test("index.md 合并每个确认漏洞的完整 Markdown 正文", () => {
   assert.match(markdown, /真实代码证据/);
   assert.match(markdown, /完整验证命令/);
   assert.match(markdown, /参数化查询/);
-  assert.match(markdown, /\[独立 Markdown\]\(findings\/H-0007-user-service-SQL注入\.md\)/);
+  assert.match(markdown, /\[独立 Markdown\]\(details\/H-0007-user-service-SQL注入\.md\)/);
   assert.doesNotMatch(markdown, /\]\(\/project\//);
 });
 

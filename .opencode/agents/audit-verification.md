@@ -52,7 +52,7 @@ permission:
 [FINDING_DETAIL]
 session_id: {session_id}
 finding_id: {finding_id}
-output_dir: {可选，默认 audit-reports/findings}
+output_dir: {可选，默认 audit-reports/details}
 ```
 
 不得要求调度器复制 finding 正文；数据库是唯一事实来源。

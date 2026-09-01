@@ -57,9 +57,6 @@ SOURCE_LIKE_EXTENSIONS = {
 }
 
 SECURITY_RELEVANT_FILENAMES = {
-    "dockerfile",
-    "docker-compose.yml",
-    "docker-compose.yaml",
     "package.json",
     "package-lock.json",
     "pnpm-lock.yaml",
@@ -89,7 +86,6 @@ SECURITY_PATH_HINTS = (
     ".github/workflows/",
     "ci/",
     "deploy/",
-    "docker/",
     "k8s/",
     "kubernetes/",
     "terraform/",
@@ -115,7 +111,29 @@ EXCLUDED_DIRS = {
     ".pytest_cache",
     ".mypy_cache",
     "audit-output",
+    ".audit-work",
+    "audit-reports",
+    "docker",
+    ".docker",
 }
+
+DOCKER_FILENAMES = {
+    "dockerfile",
+    "docker-compose.yml",
+    "docker-compose.yaml",
+    "compose.yml",
+    "compose.yaml",
+}
+
+
+def is_docker_content(path: str) -> bool:
+    name = Path(path).name.lower()
+    if name in DOCKER_FILENAMES or name.startswith("dockerfile."):
+        return True
+    return (
+        name.endswith((".yml", ".yaml"))
+        and (name.startswith("docker-compose.") or name.startswith("compose."))
+    )
 
 
 def run_git(repo: Path, args: list[str]) -> str:
@@ -145,7 +163,9 @@ def is_security_relevant(path: str) -> bool:
 
 
 def excluded_reason(path: str) -> str:
-    parts = Path(path).parts
+    parts = tuple(part.lower() for part in Path(path).parts)
+    if is_docker_content(path):
+        return "excluded_docker_content"
     for part in parts:
         if part in EXCLUDED_DIRS:
             return f"excluded_dir:{part}"

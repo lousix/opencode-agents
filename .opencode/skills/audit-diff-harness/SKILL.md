@@ -199,12 +199,14 @@ python3 references/core/git_diff_worklist.py ...
 默认输出:
 
 ```text
-{target_project}/audit-output/git-diff-scans/{scan_id}/artifacts/02_worklist/diff_worklist.csv
-{target_project}/audit-output/git-diff-scans/{scan_id}/artifacts/02_worklist/deep_review_input.csv
-{target_project}/audit-output/git-diff-scans/{scan_id}/artifacts/02_worklist/work_ledger.md
-{target_project}/audit-output/git-diff-scans/{scan_id}/artifacts/06_graph_context/graph_context.json
-{target_project}/audit-output/git-diff-scans/{scan_id}/artifacts/06_graph_context/graph_context.md
+{target_project}/.audit-work/git-diff/{scan_id}/02_worklist/diff_worklist.csv
+{target_project}/.audit-work/git-diff/{scan_id}/02_worklist/deep_review_input.csv
+{target_project}/.audit-work/git-diff/{scan_id}/02_worklist/work_ledger.md
+{target_project}/.audit-work/git-diff/{scan_id}/06_graph_context/graph_context.json
+{target_project}/.audit-work/git-diff/{scan_id}/06_graph_context/graph_context.md
 ```
+
+`.audit-work/git-diff/{scan_id}` 是可恢复的过程目录，不是正式报告目录。
 
 每个 source-like changed file 必须有覆盖结论:
 
@@ -308,18 +310,26 @@ graph_priority
 ```text
 audit_list_findings_for_detail(session_id, include_terminal=false)
 对每个 finding_id 单独 dispatch @audit-verification
-audit_generate_report_index(session_id, output_dir={scan_dir}, allow_unverified=false)
+audit_generate_report_index(session_id, output_dir={target_project}/audit-reports, allow_unverified=false)
 ```
 
-每个确认漏洞的中文 Markdown 是 canonical finding report；`index.md` 合并全部确认漏洞正文，`index.html` 是轻量管理索引。不得因为这是 Git 增量审计就绕过逐项 verification、sink-chain、deduplication、severity calibration、修复方案和断点续跑工具。
-
-`references/core/git_diff_report_template.md` 只用于 feature-scoped 补充报告，保存到:
+Git Diff 与 Code Audit 共享唯一正式输出契约:
 
 ```text
-{target_project}/audit-output/git-diff-scans/{scan_id}/feature_review.md
+{target_project}/audit-reports/index.md
+{target_project}/audit-reports/index.html
+{target_project}/audit-reports/details/{vuln_id}-{组件名称}-{中文漏洞名称}.md
 ```
 
-补充报告必须包含:
+每个确认漏洞的中文 Markdown 是 canonical finding report；`index.md` 合并全部确认漏洞正文，`index.html` 是轻量管理索引。禁止单漏洞 HTML、`report.md` 或 Git Diff 专属正式报告目录。不得因为这是 Git 增量审计就绕过逐项 verification、sink-chain、deduplication、severity calibration、修复方案和断点续跑工具。
+
+`references/core/git_diff_report_template.md` 只用于 feature-scoped 过程记录，保存到:
+
+```text
+{target_project}/.audit-work/git-diff/{scan_id}/feature_review.md
+```
+
+该文件不进入正式报告清单。过程记录必须包含:
 - 功能画像
 - 代码范围
 - 文档上下文
@@ -328,4 +338,4 @@ audit_generate_report_index(session_id, output_dir={scan_dir}, allow_unverified=
 - Final Findings
 - No findings reason (若无漏洞)
 
-报告工具不可用或失败时，feature template 只能作为标明限制的补充材料，不能冒充已逐漏洞核验的正式报告；必须记录 `audit_generate_report_unavailable`。
+报告工具不可用或失败时，feature template 只能作为标明限制的过程材料，不能冒充已逐漏洞核验的正式报告；必须记录 `audit_generate_report_unavailable`。

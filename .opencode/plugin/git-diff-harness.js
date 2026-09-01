@@ -42,7 +42,7 @@ const auditGenerateDiffWorklist = tool({
   args: {
     repo_root:     tool.schema.string().describe("Target repository root to inspect."),
     harness_root:  tool.schema.string().optional().describe("Audit harness root containing references/core/git_diff_worklist.py. Defaults to current OpenCode workspace."),
-    scan_dir:      tool.schema.string().optional().describe("Scan directory. Defaults to {repo_root}/audit-output/git-diff-scans/tool-run."),
+    scan_dir:      tool.schema.string().optional().describe("Resumable work directory. Defaults to {repo_root}/.audit-work/git-diff/tool-run."),
     out_path:      tool.schema.string().optional().describe("Output diff_worklist.csv path."),
     deep_out_path: tool.schema.string().optional().describe("Output deep_review_input.csv path."),
     mode:          tool.schema.string().optional().describe("worktree | staged | unstaged | commit | commits | range | patch | merge-base | base-head. Defaults to worktree."),
@@ -57,9 +57,9 @@ const auditGenerateDiffWorklist = tool({
   },
   async execute(args, ctx) {
     const repoRoot = args.repo_root;
-    const scanDir = args.scan_dir ?? join(repoRoot, "audit-output", "git-diff-scans", "tool-run");
-    const outPath = args.out_path ?? join(scanDir, "artifacts", "02_worklist", "diff_worklist.csv");
-    const deepOutPath = args.deep_out_path ?? join(scanDir, "artifacts", "02_worklist", "deep_review_input.csv");
+    const scanDir = args.scan_dir ?? join(repoRoot, ".audit-work", "git-diff", "tool-run");
+    const outPath = args.out_path ?? join(scanDir, "02_worklist", "diff_worklist.csv");
+    const deepOutPath = args.deep_out_path ?? join(scanDir, "02_worklist", "deep_review_input.csv");
     mkdirSync(dirname(outPath), { recursive: true });
     mkdirSync(dirname(deepOutPath), { recursive: true });
 
@@ -109,16 +109,16 @@ const auditGenerateGraphContext = tool({
     repo_root:     tool.schema.string().describe("Target repository root to inspect."),
     worklist_path: tool.schema.string().describe("deep_review_input.csv path from audit_generate_diff_worklist."),
     harness_root:  tool.schema.string().optional().describe("Audit harness root containing references/core/graph_context_adapter.py. Defaults to current OpenCode workspace."),
-    scan_dir:      tool.schema.string().optional().describe("Scan directory. Defaults to {repo_root}/audit-output/git-diff-scans/tool-run."),
+    scan_dir:      tool.schema.string().optional().describe("Resumable work directory. Defaults to {repo_root}/.audit-work/git-diff/tool-run."),
     out_json_path: tool.schema.string().optional().describe("Output graph_context.json path."),
     out_md_path:   tool.schema.string().optional().describe("Output graph_context.md path."),
     base:          tool.schema.string().optional().describe("Git diff base for graph providers. Defaults to HEAD."),
   },
   async execute(args, ctx) {
     const repoRoot = args.repo_root;
-    const scanDir = args.scan_dir ?? join(repoRoot, "audit-output", "git-diff-scans", "tool-run");
-    const outJsonPath = args.out_json_path ?? join(scanDir, "artifacts", "06_graph_context", "graph_context.json");
-    const outMdPath = args.out_md_path ?? join(scanDir, "artifacts", "06_graph_context", "graph_context.md");
+    const scanDir = args.scan_dir ?? join(repoRoot, ".audit-work", "git-diff", "tool-run");
+    const outJsonPath = args.out_json_path ?? join(scanDir, "06_graph_context", "graph_context.json");
+    const outMdPath = args.out_md_path ?? join(scanDir, "06_graph_context", "graph_context.md");
     mkdirSync(dirname(outJsonPath), { recursive: true });
     mkdirSync(dirname(outMdPath), { recursive: true });
 

@@ -14,9 +14,10 @@ Use this template for the feature-scoped supplement of Git incremental deep revi
 | Git target | `<mode/base/head/commits/patch>` |
 | Engine | `autonomous | agents | hybrid` |
 | Graph context | `none | low | medium | high` |
-| Canonical report | `<audit_generate_report markdown/html paths>` |
-| Supplement path | `<scan_dir>/feature_review.md` |
-| Artifacts | `<scan_dir>/artifacts` |
+| Canonical report | `<report_dir>/index.md` and `<report_dir>/index.html` |
+| Finding reports | `<report_dir>/details/<id>-<component>-<Chinese-title>.md` |
+| Process record | `<work_dir>/feature_review.md` |
+| Work artifacts | `<work_dir>` |
 
 ### Code Scope
 

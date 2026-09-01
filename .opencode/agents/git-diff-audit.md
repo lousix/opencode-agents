@@ -76,6 +76,8 @@ git target = --worktree
 engine = autonomous
 depth = deep-only
 docs = optional
+report_dir = {repo_root}/audit-reports
+work_dir = {repo_root}/.audit-work/git-diff/{scan_id}
 ```
 
 `--engine` 只允许:
@@ -107,22 +109,24 @@ autonomous | agents | hybrid
 - range/base-head: `git diff <base> <head>`
 - patch: read patch file and parse paths
 
-若用户提供 `--prs` 但无法本地解析 PR，记录 blocker 并要求用户提供 `--base/--head` 或 `--patch`；不要臆造 PR diff。
+若用户提供 `--prs` 但无法本地解析 PR，记录 blocker，并在本地可解析的既定范围内继续；不得请求用户补充或臆造 PR diff。
 
-### Step 2: Create Scan Artifacts
+### Step 2: Create Resumable Work Artifacts
 
 按 `references/core/git_diff_artifacts.md` 创建:
 
 ```text
-{repo_root}/audit-output/git-diff-scans/{scan_id}/
+{repo_root}/.audit-work/git-diff/{scan_id}/
 ```
+
+该目录只保存 worklist、图上下文、覆盖 ledger、候选摘要和中断重续材料，不属于正式报告交付目录。
 
 必须运行 deterministic worklist script:
 
 ```text
 audit_generate_diff_worklist(
   repo_root={repo_root},
-  scan_dir={scan_dir},
+  scan_dir={work_dir},
   mode={worktree|staged|unstaged|commit|commits|range|patch|merge-base|base-head},
   ...
 )
@@ -145,7 +149,7 @@ audit_init_session(
   language="{from recon or unknown}",
   framework="{from recon or unknown}",
   mode="git-diff-deep",
-  notes="feature={feature}; engine={engine}; scan_dir={scan_dir}; git_target={target}"
+  notes="feature={feature}; engine={engine}; work_dir={work_dir}; report_dir={report_dir}; git_target={target}"
 )
 ```
 
@@ -174,8 +178,8 @@ audit_init_session(
 ```text
 audit_generate_graph_context(
   repo_root={repo_root},
-  worklist_path={scan_dir}/artifacts/02_worklist/deep_review_input.csv,
-  scan_dir={scan_dir},
+  worklist_path={work_dir}/02_worklist/deep_review_input.csv,
+  scan_dir={work_dir},
   base={base_or_HEAD}
 )
 ```
@@ -223,7 +227,7 @@ Feature security properties 至少考虑:
 - SSRF / 出站请求 / 回调验签 / 重放保护
 - 反序列化 / 脚本执行 / 动态加载
 - 加密 / 密钥 / debug / CORS / profile
-- 依赖 / CI / 构建 / 容器暴露面
+- 依赖 / CI / 构建（Dockerfile、Compose 与 Docker 目录始终排除）
 
 ### Step 5: Vulnerability Discovery
 
@@ -263,7 +267,8 @@ Feature security properties 至少考虑:
 [GRAPH_SUPPORTING_FILES]
 [INCREMENTAL_RULES]
 session_id
-scan_dir
+work_dir
+report_dir
 ```
 
 Agent 不得做全仓库扫描。Agent 发现必须绑定功能语义和 changed code/control。
@@ -320,10 +325,10 @@ Critical/High 必须有 TRUE_SOURCE 或高置信 broken control；仅 sink 命�
 ```text
 dispatch @audit-report with:
   session_id={session_id}
-  output_dir={scan_dir}
+  output_dir={report_dir}
   feature_profile={FEATURE_PROFILE}
   diff_scope={DIFF_SCOPE}
-  scan_dir={scan_dir}
+  work_dir={work_dir}
 ```
 
 `@audit-report` 必须执行既有报告前门禁:
@@ -331,18 +336,28 @@ dispatch @audit-report with:
 ```text
 audit_list_findings_for_detail(session_id, include_terminal=false)
 对每个 finding_id 单独 dispatch @audit-verification
-audit_generate_report_index(session_id, output_dir={scan_dir}, allow_unverified=false)
+audit_generate_report_index(session_id, output_dir={report_dir}, allow_unverified=false)
 ```
 
-每个确认漏洞的中文 Markdown 是 canonical finding report；`index.md` 合并全部确认漏洞正文，`index.html` 是轻量管理索引。增量审计不得自行跳过逐项 verification、sink-chain、severity calibration、修复方案、断点续跑和 report DB 读取逻辑。
-
-同时，使用 `references/core/git_diff_report_template.md` 生成 feature-scoped 补充报告，保存:
+正式交付格式必须与 `code-audit` 完全一致:
 
 ```text
-{scan_dir}/feature_review.md
+{repo_root}/audit-reports/
+├── index.md
+├── index.html
+└── details/
+    └── {vuln_id}-{组件名称}-{中文漏洞名称}.md
 ```
 
-补充报告必须包含:
+每个确认漏洞的中文 Markdown 是 canonical finding report；`index.md` 合并全部确认漏洞正文，`index.html` 是轻量管理索引。禁止生成单漏洞 HTML、顶层 `report.md` 或另一套 Git Diff 正式报告。增量审计不得自行跳过逐项 verification、sink-chain、severity calibration、修复方案、断点续跑和 report DB 读取逻辑。
+
+同时，使用 `references/core/git_diff_report_template.md` 生成 feature-scoped 过程记录，保存:
+
+```text
+{work_dir}/feature_review.md
+```
+
+该文件只用于功能范围、changed-code binding 和覆盖审计的内部证据及断点重续，不属于正式交付清单。过程记录必须包含:
 
 - Scope
 - Document Context
@@ -353,7 +368,7 @@ audit_generate_report_index(session_id, output_dir={scan_dir}, allow_unverified=
 - Positive Security Notes
 - Unresolved Evidence Gaps（不要求用户答复，不阻塞既定范围内的审计）
 
-若报告工具不可用或调用失败，只能生成标明“报告链路未完成”的 feature 补充报告；不得用自由生成内容冒充已逐项核验的正式漏洞报告，并在 `[CONTEXT_GAPS]` 记录 `audit_generate_report_unavailable`。
+若报告工具不可用或调用失败，只能生成标明“报告链路未完成”的 feature 过程记录；不得用自由生成内容冒充已逐项核验的正式漏洞报告，并在 `[CONTEXT_GAPS]` 记录 `audit_generate_report_unavailable`。
 
 无漏洞也必须走 `audit_generate_report_index` 或明确记录报告工具不可用，说明为什么没有 finding 通过功能绑定和核验门禁。
 
@@ -368,7 +383,8 @@ audit_generate_report_index(session_id, output_dir={scan_dir}, allow_unverified=
 - 不得宣称覆盖完成，除非 `deep_review_input.csv` 每行都有 `work_ledger.md` receipt。
 - 不得写中间 JSONL candidate ledger；candidate 走现有 DB 或对话摘要。
 - 不得把 graph risk score 当作安全严重度；它只能影响审计优先级。
-- 不得绕过逐漏洞核验与 `audit_generate_report_index` 链路；增量模板只能作为 feature 补充材料。
+- 不得绕过逐漏洞核验与 `audit_generate_report_index` 链路；增量模板只能作为 `.audit-work` 下的过程材料。
+- 不得将 Git Diff 过程材料写入 `audit-reports/`，也不得创建 `report.md` 或第二套正式输出格式。
 
 ## 6. Output Skeleton
 
@@ -385,8 +401,10 @@ audit_generate_report_index(session_id, output_dir={scan_dir}, allow_unverified=
 最终输出:
 
 ```text
-[REPORT_INDEX] index.md/index.html paths
-[FINDING_REPORTS] confirmed finding Markdown paths
-[FEATURE_REVIEW] {scan_dir}/feature_review.md
-[SUMMARY] findings={N}, critical={N}, high={N}, medium={N}, low={N}, gaps={N}
+[REPORT_DONE]
+中文索引: {report_dir}/index.md
+浏览索引: {report_dir}/index.html
+确认漏洞: {N}
+排除误报: {N}
+单漏洞报告: {finding_reports}
 ```

@@ -8,43 +8,45 @@
 repo_root=<target project absolute path>
 repo_name=<basename of repo_root>
 scan_id=<feature_slug>_<timestamp>_<scope_hash>
-scan_dir=<repo_root>/audit-output/git-diff-scans/<scan_id>
-artifacts_dir=<scan_dir>/artifacts
+report_dir=<repo_root>/audit-reports
+work_dir=<repo_root>/.audit-work/git-diff/<scan_id>
 ```
 
 ## Directory Layout
 
 ```text
-<scan_dir>/
-  report.md                      # compatibility pointer/copy when needed
-  feature_review.md              # feature-scoped Git incremental supplement
+<report_dir>/
   index.md                       # Chinese merged full report with all confirmed finding bodies
-  index.html                     # optional browser view of the index
-  findings/<id>-<component>-<Chinese-title>.md # canonical per-finding reports; no per-finding HTML
-  artifacts/
-    01_context/
-      feature_profile.md
-      feature_docs.md
-      threat_model.md
-      diff_scope.md
-    02_worklist/
-      diff_worklist.csv
-      deep_review_input.csv
-      work_ledger.md
-    03_candidates/
-      candidate_summary.md
-      reviewed_feature_surfaces.md
-    04_validation/
-      validation_summary.md
-      attack_path_notes.md
-    05_agent_outputs/
-      autonomous_notes.md
-      agent_dispatch_plan.md
-    06_graph_context/
-      graph_context.json
-      graph_context.md
-      code_review_graph_raw.json
+  index.html                     # lightweight browser view of the index
+  details/<id>-<component>-<Chinese-title>.md # canonical per-finding reports; no per-finding HTML
+
+<work_dir>/
+  feature_review.md              # internal feature-scoped process record; not a formal deliverable
+  01_context/
+    feature_profile.md
+    feature_docs.md
+    threat_model.md
+    diff_scope.md
+  02_worklist/
+    diff_worklist.csv
+    deep_review_input.csv
+    work_ledger.md
+  03_candidates/
+    candidate_summary.md
+    reviewed_feature_surfaces.md
+  04_validation/
+    validation_summary.md
+    attack_path_notes.md
+  05_agent_outputs/
+    autonomous_notes.md
+    agent_dispatch_plan.md
+  06_graph_context/
+    graph_context.json
+    graph_context.md
+    code_review_graph_raw.json
 ```
+
+`report_dir` 的结构、文件名、语言和内容门禁必须与 `code-audit` 相同。`work_dir` 只保存增量审计过程证据、覆盖台账和中断重续状态，不能作为另一套对外交付报告。
 
 ## Context Artifacts
 
@@ -224,11 +226,11 @@ The canonical finding reports must come from the DB-backed per-finding report pi
 ```text
 audit_list_findings_for_detail(session_id, include_terminal=false)
 dispatch one audit-verification agent per finding_id
-audit_generate_report_index(session_id, output_dir=<scan_dir>, allow_unverified=false)
+audit_generate_report_index(session_id, output_dir=<report_dir>, allow_unverified=false)
 ```
 
 Each confirmed finding produces Chinese Markdown only. `index.md` merges the complete current body of every confirmed finding, while `index.html` remains a lightweight management index. The merged content must come from current per-finding artifacts rather than a second free-form rewrite, preserving per-finding verification, resumable checkpoints, sink-chain validation, severity calibration, remediation facts, and the audit DB contract.
 
-`feature_review.md` is the Git incremental supplement. It must include feature scope, diff scope, worklist/graph coverage, changed-code binding notes, reviewed surfaces, and known gaps.
+`feature_review.md` is an internal Git incremental process record under `<work_dir>`. It must include feature scope, diff scope, worklist/graph coverage, changed-code binding notes, reviewed surfaces, and known gaps, but it must not be listed as a formal report deliverable.
 
-`report.md` may be a compatibility pointer to `index.md`. If the report pipeline is unavailable, the feature template remains a limited supplement and must not be presented as a completed per-finding report; record that limitation explicitly.
+Do not create `report.md`, per-finding HTML, or any Git Diff-specific formal report directory. If the report pipeline is unavailable, the feature template remains a limited process record and must not be presented as a completed per-finding report; record that limitation explicitly.

@@ -74,8 +74,8 @@
 | Graph Context Skill | `.opencode/skills/audit-graph-context/SKILL.md` | 可选 CodeGraph / code-review-graph 上下文层 |
 | Tool Plugin | `.opencode/plugin/git-diff-harness.js` | 独立提供 `audit_generate_diff_worklist` / `audit_generate_graph_context` 两个增量审计工具 |
 | Methodology | `references/core/git_diff_security_review.md` | 功能语义、changed-code binding、supporting context 规则 |
-| Artifacts | `references/core/git_diff_artifacts.md` | `audit-output/git-diff-scans/{scan_id}` 目录协议 |
-| Report Supplement | `references/core/git_diff_report_template.md` | Feature Security Review 补充报告模板；最终报告优先走 `audit_generate_report` |
+| Artifacts | `references/core/git_diff_artifacts.md` | 正式报告复用 `audit-reports/`；过程材料保存到 `.audit-work/git-diff/{scan_id}` |
+| Process Record | `references/core/git_diff_report_template.md` | `.audit-work` 下的功能审计过程记录；正式报告走与 Code Audit 相同的 `audit_generate_report` 链路 |
 | Graph Adapter | `references/core/graph_context_adapter.md` | 图上下文 provider 状态、置信度、限制 |
 | Graph Init Script | `references/core/init_graph_context.py` | 审计前在目标项目准备 CodeGraph / code-review-graph 数据库 |
 
@@ -86,6 +86,7 @@
 3. 默认 `engine=autonomous`；用户指定或功能过大时可用 `agents` / `hybrid`。
 4. 最终 finding 必须同时绑定功能语义、changed code/control、真实代码证据和可达攻击路径。
 5. 图上下文只用于 supporting files / blast radius / affected flows，不是漏洞证据。
+6. 正式交付固定为 `audit-reports/index.md`、`index.html` 与 `details/{编号}-{组件}-{中文漏洞名}.md`；Git Diff 特有材料不得进入正式报告目录。
 
 优先使用独立 OpenCode plugin `.opencode/plugin/git-diff-harness.js` 暴露的 tools:
 
